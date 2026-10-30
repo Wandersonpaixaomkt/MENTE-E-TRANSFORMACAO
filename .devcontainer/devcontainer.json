@@ -1,0 +1,12 @@
+{
+  "name": "Mente e Transformação",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "GitHub.vscode-github-actions"
+      ]
+    }
+  }
+}
