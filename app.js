@@ -157,7 +157,7 @@ function loginTemplate() {
   return `
     <main class="login-page">
       <section class="login-hero" aria-label="Mente e Transformação">
-        <div class="brand"><span class="brand-mark">M</span><span class="brand-name">Mente & Transformação</span></div>
+        <div class="brand"><img class="brand-logo" src="assets/logo-horizontal-branco.png" alt="Mente e Transformação · Clínica"></div>
         <div class="login-message">
           <p class="eyebrow">Gestão clínica integrada</p>
           <h1>O cuidado começa com escuta e conexão.</h1>
@@ -167,7 +167,7 @@ function loginTemplate() {
       </section>
       <section class="login-panel">
         <div class="login-card">
-          <p class="eyebrow" style="color:#4d8b69">Acesso ao sistema</p>
+          <p class="eyebrow" style="color:var(--forest-700)">Acesso ao sistema</p>
           <h2>Como deseja entrar?</h2>
           <p>Selecione seu perfil para acessar o painel correspondente.</p>
           <div class="profile-choice">
@@ -208,7 +208,7 @@ function shellTemplate(content) {
   return `
     <div class="app-shell">
       <aside class="sidebar">
-        <div class="brand"><span class="brand-mark">M</span><span class="brand-name">Mente & Transformação</span></div>
+        <div class="brand"><img class="brand-logo" src="assets/logo-horizontal-branco.png" alt="Mente e Transformação · Clínica"></div>
         <p class="nav-label">${isAdmin ? "Gestão da clínica" : "Área profissional"}</p>
         <nav class="sidebar-nav" aria-label="Navegação principal">
           ${navItems().map(([view, icon, label]) => `<button class="nav-item ${activeNav === view ? "active" : ""}" type="button" data-nav="${view}"><span class="nav-icon">${icon}</span>${label}</button>`).join("")}
@@ -409,7 +409,7 @@ function reportPaper(patient, print = false) {
     return `<section class="report-section"><h3>${title}</h3>${items.length ? items.map((professional) => `<div class="professional-report"><strong>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.name)}</strong><p>${escapeHTML(reports[professional.id][field])}</p></div>`).join("") : `<p class="report-empty">Nenhum registro profissional preenchido nesta seção.</p>`}</section>`;
   };
   const guardians = patient.guardians;
-  return `<article class="report-paper ${print ? "print-paper" : ""}"><header class="letterhead"><h2>${escapeHTML(state.clinic.name)}</h2><p>${escapeHTML(state.clinic.address)} · ${escapeHTML(state.clinic.phone)} · ${escapeHTML(state.clinic.email)}</p><div class="report-title">Relatório profissional integrado</div></header><section class="report-section"><h3>Dados de cadastro</h3><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Sexo</td><td>${escapeHTML(patient.gender)}</td></tr><tr><td>Nascimento</td><td>${dateLabel(patient.birthDate)} · ${ageFromDate(patient.birthDate)}</td><td>CPF</td><td>${escapeHTML(patient.cpf || "Não informado")}</td></tr><tr><td>Responsáveis</td><td colspan="3">${guardians.map((guardian) => `${escapeHTML(guardian.relation)}: ${escapeHTML(guardian.name)} · CPF ${escapeHTML(guardian.cpf || "não informado")}`).join("<br>")}</td></tr><tr><td>Queixa familiar</td><td colspan="3">${escapeHTML(patient.familyComplaint)}</td></tr></tbody></table></section>${reportSection("complaint", "Queixa principal por área")}${reportSection("plan", "Plano de ação")}${reportSection("result", "Resultados e evolução")}<section class="signatures">${guardians.map((guardian) => `<div class="signature">${escapeHTML(guardian.name)}<span>${escapeHTML(guardian.relation)} · CPF ${escapeHTML(guardian.cpf || "")}</span></div>`).join("")}<div class="signature">${escapeHTML(state.clinic.director)}<span>${escapeHTML(state.clinic.directorRole)}</span></div></section><footer class="report-footer">${escapeHTML(state.clinic.name)} · Documento gerado em ${dateLabel(new Date().toISOString().slice(0, 10))}</footer></article>`;
+  return `<article class="report-paper ${print ? "print-paper" : ""}"><header class="letterhead"><img class="report-logo" src="assets/logo-horizontal-azul.png" alt="Mente e Transformação · Clínica"><h2>${escapeHTML(state.clinic.name)}</h2><p>${escapeHTML(state.clinic.address)} · ${escapeHTML(state.clinic.phone)} · ${escapeHTML(state.clinic.email)}</p><div class="report-title">Relatório profissional integrado</div></header><section class="report-section"><h3>Dados de cadastro</h3><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Sexo</td><td>${escapeHTML(patient.gender)}</td></tr><tr><td>Nascimento</td><td>${dateLabel(patient.birthDate)} · ${ageFromDate(patient.birthDate)}</td><td>CPF</td><td>${escapeHTML(patient.cpf || "Não informado")}</td></tr><tr><td>Responsáveis</td><td colspan="3">${guardians.map((guardian) => `${escapeHTML(guardian.relation)}: ${escapeHTML(guardian.name)} · CPF ${escapeHTML(guardian.cpf || "não informado")}`).join("<br>")}</td></tr><tr><td>Queixa familiar</td><td colspan="3">${escapeHTML(patient.familyComplaint)}</td></tr></tbody></table></section>${reportSection("complaint", "Queixa principal por área")}${reportSection("plan", "Plano de ação")}${reportSection("result", "Resultados e evolução")}<section class="signatures">${guardians.map((guardian) => `<div class="signature">${escapeHTML(guardian.name)}<span>${escapeHTML(guardian.relation)} · CPF ${escapeHTML(guardian.cpf || "")}</span></div>`).join("")}<div class="signature">${escapeHTML(state.clinic.director)}<span>${escapeHTML(state.clinic.directorRole)}</span></div></section><footer class="report-footer">${escapeHTML(state.clinic.name)} · Documento gerado em ${dateLabel(new Date().toISOString().slice(0, 10))}</footer></article>`;
 }
 
 function emptyInline(text) { return `<div class="empty-inline">${escapeHTML(text)}</div>`; }
