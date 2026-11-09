@@ -182,3 +182,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .person-cell { align-items: flex-start; }
 .person-cell small { display: block; margin-top: 3px; max-width: 46ch; font-size: 12px; font-weight: 400; line-height: 1.4; }
 .data-table td:first-child { min-width: 260px; }
+
+/* login e acesso dos profissionais */
+.form-message { margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; color: var(--forest-800); background: var(--sage-100); font-size: 13px; }
+.form-message.error { color: var(--danger); background: #fff4f4; }
+.login-card .form-actions { margin-top: 18px; }
+.login-card .form-actions .button { width: 100%; }
+.access-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; border-color: var(--wood); background: #fffaf2; }
+.access-card h2 { margin: 0 0 4px; font-size: 18px; }
+.access-data { display: flex; flex-wrap: wrap; gap: 12px 28px; margin: 14px 0 0; }
+.access-data dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.access-data dd { margin: 2px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 17px; font-weight: 600; user-select: all; }
+@media (max-width: 780px) { .access-card { flex-direction: column; } }
+.field.hidden { display: none; }
