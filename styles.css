@@ -195,3 +195,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .access-data dd { margin: 2px 0 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 17px; font-weight: 600; user-select: all; }
 @media (max-width: 780px) { .access-card { flex-direction: column; } }
 .field.hidden { display: none; }
+
+/* equipe: linha clicável e edição de acesso */
+.data-table tr.is-clickable { cursor: pointer; }
+.data-table tr.is-clickable:hover td { background: var(--sage-100); }
+.data-table tr.is-selected td { background: var(--sage-200); }
+.data-table tr.is-clickable:focus-visible { outline: 3px solid #84b59a; outline-offset: -3px; }
+.person-cell .access-line { margin-top: 4px; font-weight: 600; color: var(--forest-700); }
+.access-edit { padding: 18px 0 4px; }
+.access-edit h3 { margin: 0 0 12px; font-size: 14px; }
+.access-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.form-card textarea { width: 100%; resize: vertical; }
+.form-card .form-actions { display: flex; justify-content: flex-end; gap: 10px; }

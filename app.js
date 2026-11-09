@@ -88,7 +88,7 @@ const demoState = {
 };
 
 let state = loadState();
-let ui = { role: null, account: null, newAccess: null, view: "dashboard", activeCaseId: "case-miguel", professionalId: "prof-lorrayne", filterSpecialty: "Todas", caseTab: "registro" };
+let ui = { role: null, account: null, newAccess: null, editProfessionalId: null, view: "dashboard", activeCaseId: "case-miguel", professionalId: "prof-lorrayne", filterSpecialty: "Todas", caseTab: "registro" };
 
 /* Acesso: a senha nunca é guardada, só o hash (SHA-256).
    ATENÇÃO: sem servidor, isto é apenas uma barreira de tela. Quem tiver acesso ao navegador ou
@@ -193,7 +193,7 @@ function getProfessional(id) { return state.professionals.find((professional) =>
 function getAssigned(patient) { return patient ? patient.assignedIds.map(getProfessional).filter(Boolean) : []; }
 function patientReports(patientId) { return state.reports[patientId] || {}; }
 function patientSessions(patientId, professionalId) { return state.sessions[patientId]?.[professionalId] || []; }
-function setView(view) { ui.view = view; ui.newAccess = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 
 function toast(message, isError = false) {
   const region = document.querySelector("#toast-region");
@@ -383,12 +383,32 @@ function professionalCaseRow(patient, professional) {
 
 function professionalsView() {
   return `
-    ${sectionHeading("Profissionais", "Cadastre e mantenha atualizada a equipe multidisciplinar.", `<button class="button" type="button" data-scroll-add>+ Cadastrar profissional</button>`)}
+    ${sectionHeading("Profissionais", "Cadastre e mantenha atualizada a equipe multidisciplinar. Clique em um profissional para ver e editar os dados e o acesso.", `<button class="button" type="button" data-scroll-add>+ Cadastrar profissional</button>`)}
     ${accessCard()}
     <div class="split-layout">
-      <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Equipe cadastrada</h2><span class="cell-muted">${state.professionals.length} profissionais</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Profissional</th><th>Especialidade</th><th>Código/registro</th><th>Acesso</th><th></th></tr></thead><tbody>${state.professionals.map((professional) => `<tr><td><div class="person-cell"><span class="mini-avatar">${initials(professional.name)}</span><div><strong>${escapeHTML(professional.name)}</strong>${professional.focus ? `<small class="cell-muted">${escapeHTML(professional.focus)}</small>` : ""}</div></div></td><td>${escapeHTML(professional.specialty)}</td><td class="cell-muted">${escapeHTML(professional.code || "Registro a informar")}</td><td class="cell-muted">${escapeHTML(accountOf(professional.id)?.username || "Sem acesso")}</td><td><div class="table-actions"><button class="button secondary small" type="button" data-access-professional="${professional.id}">${accountOf(professional.id) ? "Nova senha" : "Gerar acesso"}</button><button class="button danger small" type="button" data-delete-professional="${professional.id}">Remover</button></div></td></tr>`).join("") || `<tr><td colspan="5">${emptyInline("Nenhum profissional cadastrado.")}</td></tr>`}</tbody></table></div></article>
-      <aside class="panel form-card" id="add-professional"><h2>Novo profissional</h2><p>Ao salvar, o sistema gera automaticamente um usuário e uma senha para o profissional acessar a própria conta.</p><form id="professional-form"><div class="form-grid"><div class="field full"><label for="professional-name">Nome completo</label><input id="professional-name" name="name" required placeholder="Nome do profissional" /></div><div class="field"><label for="professional-specialty">Especialidade</label><select id="professional-specialty" name="specialty" required><option value="" selected disabled>Selecione</option>${SPECIALTIES.map((item) => `<option>${item}</option>`).join("")}</select></div><div class="field"><label for="professional-code">Código ou registro</label><input id="professional-code" name="code" required placeholder="Ex.: CRP 00/00000" /></div></div><div class="form-actions"><button class="button" type="submit">Salvar profissional</button></div></form></aside>
+      <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Equipe cadastrada</h2><span class="cell-muted">${state.professionals.length} profissionais</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Profissional</th><th>Especialidade</th><th>Código/registro</th><th></th></tr></thead><tbody>${state.professionals.map((professional) => `<tr class="is-clickable ${professional.id === ui.editProfessionalId ? "is-selected" : ""}" tabindex="0" data-edit-professional="${professional.id}" aria-label="Ver e editar ${escapeHTML(professional.name)}"><td><div class="person-cell"><span class="mini-avatar">${initials(professional.name)}</span><div><strong>${escapeHTML(professional.name)}</strong>${professional.focus ? `<small class="cell-muted">${escapeHTML(professional.focus)}</small>` : ""}<small class="access-line">${accountOf(professional.id) ? `Usuário: ${escapeHTML(accountOf(professional.id).username)}` : "Sem acesso"}</small></div></div></td><td>${escapeHTML(professional.specialty)}</td><td class="cell-muted">${escapeHTML(professional.code || "Registro a informar")}</td><td><div class="table-actions"><button class="button danger small" type="button" data-delete-professional="${professional.id}">Remover</button></div></td></tr>`).join("") || `<tr><td colspan="4">${emptyInline("Nenhum profissional cadastrado.")}</td></tr>`}</tbody></table></div></article>
+      <aside class="panel form-card" id="add-professional">${professionalFormCard()}</aside>
     </div>`;
+}
+
+function professionalFormCard() {
+  const professional = getProfessional(ui.editProfessionalId);
+  if (!professional) return `<h2>Novo profissional</h2><p>Ao salvar, o sistema gera automaticamente um usuário e uma senha para o profissional acessar a própria conta.</p><form id="professional-form"><div class="form-grid"><div class="field full"><label for="professional-name">Nome completo</label><input id="professional-name" name="name" required placeholder="Nome do profissional" /></div><div class="field"><label for="professional-specialty">Especialidade</label><select id="professional-specialty" name="specialty" required><option value="" selected disabled>Selecione</option>${SPECIALTIES.map((item) => `<option>${item}</option>`).join("")}</select></div><div class="field"><label for="professional-code">Código ou registro</label><input id="professional-code" name="code" required placeholder="Ex.: CRP 00/00000" /></div></div><div class="form-actions"><button class="button" type="submit">Salvar profissional</button></div></form>`;
+  const account = accountOf(professional.id);
+  const passwordHint = account ? (account.password ? "" : "Senha anterior não pode ser consultada. Defina uma nova para alterá-la.") : "Preencha usuário e senha para liberar o acesso deste profissional.";
+  return `<h2>${escapeHTML(professional.name)}</h2><p>Dados e acesso do profissional. Somente a administração vê esta área.</p>
+    <form id="professional-edit-form"><div class="form-grid">
+      <div class="field full"><label for="edit-name">Nome completo</label><input id="edit-name" name="name" required value="${escapeHTML(professional.name)}" /></div>
+      <div class="field"><label for="edit-specialty">Especialidade</label><select id="edit-specialty" name="specialty" required>${SPECIALTIES.map((item) => `<option ${item === professional.specialty ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      <div class="field"><label for="edit-code">Código ou registro</label><input id="edit-code" name="code" value="${escapeHTML(professional.code || "")}" placeholder="Ex.: CRP 00/00000" /></div>
+      <div class="field full"><label for="edit-focus">Áreas de atuação</label><textarea id="edit-focus" name="focus" rows="3" placeholder="Resumo da atuação do profissional">${escapeHTML(professional.focus || "")}</textarea></div>
+    </div>
+    <div class="form-section access-edit"><h3>Acesso ao sistema</h3><div class="form-grid">
+      <div class="field full"><label for="edit-username">Usuário</label><input id="edit-username" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" value="${escapeHTML(account?.username || "")}" placeholder="nome.sobrenome" /></div>
+      <div class="field full"><label for="edit-password">Senha</label><input id="edit-password" name="password" type="password" autocomplete="off" value="${escapeHTML(account?.password || "")}" placeholder="${account ? "Defina uma nova senha" : "Senha de acesso"}" />${passwordHint ? `<small class="cell-muted">${passwordHint}</small>` : ""}</div>
+    </div>
+    <div class="access-tools"><button class="button secondary small" type="button" data-toggle-password>Mostrar senha</button><button class="button secondary small" type="button" data-generate-password>Gerar nova senha</button><button class="button secondary small" type="button" data-copy-credentials>Copiar acesso</button></div></div>
+    <div class="form-actions"><button class="button secondary" type="button" data-cancel-edit>Cancelar</button><button class="button" type="submit">Salvar alterações</button></div></form>`;
 }
 
 function guardianFields(guardian = {}) {
@@ -517,11 +537,20 @@ function render() {
 function bindEvents() {
   document.querySelector("#login-form")?.addEventListener("submit", submitLogin);
   document.querySelectorAll("[data-nav]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.nav)));
-  document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", () => { ui.role = null; ui.account = null; ui.newAccess = null; ui.view = "dashboard"; render(); }));
+  document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", () => { ui.role = null; ui.account = null; ui.newAccess = null; ui.editProfessionalId = null; ui.view = "dashboard"; render(); }));
   document.querySelectorAll("[data-open-notices]").forEach((button) => button.addEventListener("click", () => { toast(ui.role === "admin" ? "Você possui encaminhamentos e atualizações para revisar." : "Estes são os casos encaminhados para seu perfil."); setView(ui.role === "admin" ? "assignments" : "my-cases"); }));
   document.querySelectorAll("[data-open-assignment]").forEach((button) => button.addEventListener("click", () => { ui.activeCaseId = button.dataset.openAssignment; setView("assignments"); }));
   document.querySelectorAll("[data-open-case]").forEach((button) => button.addEventListener("click", () => { ui.activeCaseId = button.dataset.openCase; ui.caseTab = "registro"; setView("case-detail"); }));
-  document.querySelectorAll("[data-access-professional]").forEach((button) => button.addEventListener("click", () => issueAccess(button.dataset.accessProfessional)));
+  document.querySelectorAll("[data-edit-professional]").forEach((row) => {
+    const open = () => { ui.editProfessionalId = row.dataset.editProfessional; ui.newAccess = null; render(); document.querySelector("#add-professional")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+    row.addEventListener("click", (event) => { if (!event.target.closest("button")) open(); });
+    row.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.target === row) open(); });
+  });
+  document.querySelector("[data-cancel-edit]")?.addEventListener("click", () => { ui.editProfessionalId = null; render(); });
+  document.querySelector("[data-toggle-password]")?.addEventListener("click", (event) => { const input = document.querySelector("#edit-password"); const show = input.type === "password"; input.type = show ? "text" : "password"; event.currentTarget.textContent = show ? "Ocultar senha" : "Mostrar senha"; });
+  document.querySelector("[data-generate-password]")?.addEventListener("click", () => { const input = document.querySelector("#edit-password"); input.value = generatePassword(); input.type = "text"; document.querySelector("[data-toggle-password]").textContent = "Ocultar senha"; toast("Nova senha gerada. Clique em Salvar alterações para aplicar."); });
+  document.querySelector("[data-copy-credentials]")?.addEventListener("click", () => { const user = document.querySelector("#edit-username").value, pass = document.querySelector("#edit-password").value; if (!user || !pass) return toast("Preencha usuário e senha antes de copiar.", true); navigator.clipboard?.writeText(`Usuário: ${user}\nSenha: ${pass}`).then(() => toast("Acesso copiado."), () => toast("Não foi possível copiar. Selecione e copie manualmente.", true)); });
+  document.querySelector("#professional-edit-form")?.addEventListener("submit", submitProfessionalEdit);
   document.querySelector("[data-copy-access]")?.addEventListener("click", copyAccess);
   document.querySelector("[data-dismiss-access]")?.addEventListener("click", () => { ui.newAccess = null; render(); });
   document.querySelectorAll("[data-delete-professional]").forEach((button) => button.addEventListener("click", () => deleteProfessional(button.dataset.deleteProfessional)));
@@ -572,23 +601,39 @@ async function createAccess(professional) {
   const username = existing?.username || suggestUsername(professional.name);
   const password = generatePassword();
   const hash = await hashPassword(username, password);
-  if (existing) existing.hash = hash;
-  else state.accounts.push({ username, role: "professional", professionalId: professional.id, hash });
+  if (existing) Object.assign(existing, { hash, password });
+  else state.accounts.push({ username, role: "professional", professionalId: professional.id, password, hash });
   ui.newAccess = { name: professional.name, username, password };
-}
-
-async function issueAccess(id) {
-  if (ui.role !== "admin") return toast("Somente a administração pode gerar acessos.", true);
-  const professional = getProfessional(id);
-  if (!professional) return;
-  await createAccess(professional);
-  saveState(); render(); window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function copyAccess() {
   const access = ui.newAccess;
   if (!access) return;
   navigator.clipboard?.writeText(`Usuário: ${access.username}\nSenha: ${access.password}`).then(() => toast("Acesso copiado."), () => toast("Não foi possível copiar. Selecione e copie manualmente.", true));
+}
+
+async function submitProfessionalEdit(event) {
+  event.preventDefault();
+  if (ui.role !== "admin") return toast("Somente a administração pode editar profissionais.", true);
+  const professional = getProfessional(ui.editProfessionalId);
+  if (!professional) return;
+  const data = new FormData(event.currentTarget);
+  const name = data.get("name").trim(), username = normUser(data.get("username")), password = String(data.get("password") || "");
+  const account = accountOf(professional.id);
+  if (!name) return toast("Informe o nome do profissional.", true);
+  if (password && !username) return toast("Informe o usuário de acesso.", true);
+  if (username && !/^[a-z0-9._-]{3,}$/.test(username)) return toast("O usuário precisa ter 3 ou mais caracteres: letras minúsculas, números, ponto, hífen ou sublinhado.", true);
+  if (username && state.accounts.some((item) => item.username === username && item !== account)) return toast("Este usuário já está em uso.", true);
+  if (password && password.length < 6) return toast("A senha precisa ter pelo menos 6 caracteres.", true);
+  const keepsHash = Boolean(account) && !password && !account.password && username === account.username;
+  if (username && !password && !keepsHash) return toast("Defina uma senha para este acesso.", true);
+  Object.assign(professional, { name, specialty: data.get("specialty"), code: data.get("code").trim(), focus: data.get("focus").trim() });
+  if (username && !keepsHash) {
+    const hash = await hashPassword(username, password);
+    if (account) Object.assign(account, { username, password, hash });
+    else state.accounts.push({ username, role: "professional", professionalId: professional.id, password, hash });
+  }
+  saveState(); ui.editProfessionalId = null; render(); toast("Dados do profissional atualizados.");
 }
 
 async function submitProfessional(event) {
@@ -611,6 +656,7 @@ function deleteProfessional(id) {
   state.professionals = state.professionals.filter((item) => item.id !== id);
   state.accounts = state.accounts.filter((account) => account.professionalId !== id);
   if (ui.professionalId === id) ui.professionalId = state.professionals[0]?.id;
+  if (ui.editProfessionalId === id) ui.editProfessionalId = null;
   saveState(); render(); toast("Profissional removido da equipe.");
 }
 
