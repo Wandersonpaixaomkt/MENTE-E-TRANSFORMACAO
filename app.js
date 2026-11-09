@@ -1,6 +1,6 @@
 /* Mente & Transformação — protótipo funcional com persistência local */
 
-const STORAGE_KEY = "mente-transformacao-clinic-v3";
+const STORAGE_KEY = "mente-transformacao-clinic-v4";
 const SPECIALTIES = [
   "Psicologia",
   "Psicopedagogia",
@@ -32,7 +32,7 @@ const demoState = {
     { id: "prof-costa", name: "Dr. Costa", specialty: "Fonoaudiologia", code: "", focus: "Fonoaudiólogo e terapeuta ABA. Comunicação e linguagem, motricidade orofacial e dificuldades alimentares em crianças e adultos neurodivergentes." },
   ],
   accounts: [
-    { username: "dravania", role: "admin", hash: null },
+    { username: "dravania", role: "admin", hash: "c117add62f69b58a461d8e4550203b6e314d282d579291a933fbf813f12af3c4" },
   ],
   patients: [
     {
