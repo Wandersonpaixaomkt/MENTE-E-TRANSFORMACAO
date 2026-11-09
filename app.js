@@ -1,6 +1,6 @@
 /* Mente & Transformação — protótipo funcional com persistência local */
 
-const STORAGE_KEY = "mente-transformacao-clinic-v1";
+const STORAGE_KEY = "mente-transformacao-clinic-v2";
 const SPECIALTIES = [
   "Psicologia",
   "Psicopedagogia",
@@ -24,10 +24,11 @@ const demoState = {
     directorRole: "Diretora Clínica",
   },
   professionals: [
-    { id: "prof-ana", name: "Dra. Ana Luísa Mendes", specialty: "Psicologia", code: "CRP 00/12345" },
-    { id: "prof-bruno", name: "Bruno Farias", specialty: "Psicopedagogia", code: "ABPp 00/6789" },
-    { id: "prof-clara", name: "Dra. Clara Paes", specialty: "Fonoaudiologia", code: "CRFa 0-00000" },
-    { id: "prof-daniel", name: "Daniela Rocha", specialty: "Terapia Ocupacional", code: "CREFITO 0/00000" },
+    { id: "prof-lorrayne", name: "Lorrayne Kendaly Luna Costa", specialty: "Neuropsicologia", code: "CRP 10/11303", focus: "Avaliação neuropsicológica, psicoterapia infantil e orientação parental. Pós-graduanda em Intervenção ABA para Autismo e Deficiência Intelectual." },
+    { id: "prof-gabrielly", name: "Gabrielly Lima", specialty: "Nutrição", code: "CRN-7 17462/P", focus: "Nutrição clínica e hospitalar. Especialização em andamento em Nutrição em Neuropsiquiatria." },
+    { id: "prof-eduardo", name: "Eduardo Vilhena", specialty: "Psicologia", code: "CRP 10/11278", focus: "Terapia Cognitivo-Comportamental (TCC), avaliação psicológica e acompanhamento em saúde mental." },
+    { id: "prof-psicanalista", name: "Psicóloga e psicanalista (nome a informar)", specialty: "Psicologia", code: "", focus: "Escuta psicanalítica para adolescentes, adultos, idosos e casais. Especialista em Saúde Mental." },
+    { id: "prof-costa", name: "Dr. Costa", specialty: "Fonoaudiologia", code: "", focus: "Fonoaudiólogo e terapeuta ABA. Comunicação e linguagem, motricidade orofacial e dificuldades alimentares em crianças e adultos neurodivergentes." },
   ],
   patients: [
     {
@@ -43,7 +44,7 @@ const demoState = {
       hypothesis: { has: true, narrative: "Família relata dificuldades na comunicação e interação em contextos sociais." },
       diagnosis: { has: true, fileName: "avaliacao-escolar.pdf" },
       familyComplaint: "A família observa atraso na fala, frustração ao comunicar necessidades e dificuldades de adaptação na escola.",
-      assignedIds: ["prof-ana", "prof-bruno", "prof-clara"],
+      assignedIds: ["prof-lorrayne", "prof-costa"],
       status: "Em acompanhamento",
       createdAt: "2026-10-21",
     },
@@ -57,30 +58,24 @@ const demoState = {
       hypothesis: { has: false, narrative: "" },
       diagnosis: { has: false, fileName: "" },
       familyComplaint: "A família busca acompanhamento para dificuldades de aprendizagem e organização da rotina escolar.",
-      assignedIds: ["prof-bruno", "prof-daniel"],
+      assignedIds: ["prof-lorrayne", "prof-gabrielly"],
       status: "Em acompanhamento",
       createdAt: "2026-10-24",
     },
   ],
   reports: {
     "case-miguel": {
-      "prof-ana": {
+      "prof-lorrayne": {
         complaint: "Observa-se dificuldade de comunicação de necessidades e regulação emocional diante de mudanças de rotina.",
         plan: "Realizar acolhimento lúdico, observação clínica e orientação parental com foco em previsibilidade e comunicação.",
         result: "Vínculo terapêutico iniciado. Miguel passou a aceitar melhor a transição entre atividades em sessão.",
-        updatedAt: "2026-10-28",
-      },
-      "prof-bruno": {
-        complaint: "Há desafios na manutenção da atenção em tarefas estruturadas e no reconhecimento de sons iniciais.",
-        plan: "Aplicar sondagem psicopedagógica e propor atividades graduadas de consciência fonológica.",
-        result: "",
         updatedAt: "2026-10-28",
       },
     },
   },
   sessions: {
     "case-miguel": {
-      "prof-ana": [
+      "prof-lorrayne": [
         { id: "s1", date: "2026-10-27", objective: "Entrevista inicial e observação clínica", status: "Realizada" },
         { id: "s2", date: "2026-11-03", objective: "Atividade de vínculo e comunicação", status: "Agendada" },
       ],
@@ -89,7 +84,7 @@ const demoState = {
 };
 
 let state = loadState();
-let ui = { role: null, view: "dashboard", activeCaseId: "case-miguel", professionalId: "prof-ana", filterSpecialty: "Todas", caseTab: "registro" };
+let ui = { role: null, view: "dashboard", activeCaseId: "case-miguel", professionalId: "prof-lorrayne", filterSpecialty: "Todas", caseTab: "registro" };
 
 function loadState() {
   try {
@@ -305,7 +300,7 @@ function professionalsView() {
   return `
     ${sectionHeading("Profissionais", "Cadastre e mantenha atualizada a equipe multidisciplinar.", `<button class="button" type="button" data-scroll-add>+ Cadastrar profissional</button>`)}
     <div class="split-layout">
-      <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Equipe cadastrada</h2><span class="cell-muted">${state.professionals.length} profissionais</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Profissional</th><th>Especialidade</th><th>Código/registro</th><th></th></tr></thead><tbody>${state.professionals.map((professional) => `<tr><td><div class="person-cell"><span class="mini-avatar">${initials(professional.name)}</span><strong>${escapeHTML(professional.name)}</strong></div></td><td>${escapeHTML(professional.specialty)}</td><td class="cell-muted">${escapeHTML(professional.code)}</td><td><div class="table-actions"><button class="button danger small" type="button" data-delete-professional="${professional.id}">Remover</button></div></td></tr>`).join("") || `<tr><td colspan="4">${emptyInline("Nenhum profissional cadastrado.")}</td></tr>`}</tbody></table></div></article>
+      <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Equipe cadastrada</h2><span class="cell-muted">${state.professionals.length} profissionais</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Profissional</th><th>Especialidade</th><th>Código/registro</th><th></th></tr></thead><tbody>${state.professionals.map((professional) => `<tr><td><div class="person-cell"><span class="mini-avatar">${initials(professional.name)}</span><div><strong>${escapeHTML(professional.name)}</strong>${professional.focus ? `<small class="cell-muted">${escapeHTML(professional.focus)}</small>` : ""}</div></div></td><td>${escapeHTML(professional.specialty)}</td><td class="cell-muted">${escapeHTML(professional.code || "Registro a informar")}</td><td><div class="table-actions"><button class="button danger small" type="button" data-delete-professional="${professional.id}">Remover</button></div></td></tr>`).join("") || `<tr><td colspan="4">${emptyInline("Nenhum profissional cadastrado.")}</td></tr>`}</tbody></table></div></article>
       <aside class="panel form-card" id="add-professional"><h2>Novo profissional</h2><p>Os profissionais cadastrados ficarão disponíveis para encaminhamento de novos casos.</p><form id="professional-form"><div class="form-grid"><div class="field full"><label for="professional-name">Nome completo</label><input id="professional-name" name="name" required placeholder="Nome do profissional" /></div><div class="field"><label for="professional-specialty">Especialidade</label><select id="professional-specialty" name="specialty" required><option value="" selected disabled>Selecione</option>${SPECIALTIES.map((item) => `<option>${item}</option>`).join("")}</select></div><div class="field"><label for="professional-code">Código ou registro</label><input id="professional-code" name="code" required placeholder="Ex.: CRP 00/00000" /></div></div><div class="form-actions"><button class="button" type="submit">Salvar profissional</button></div></form></aside>
     </div>`;
 }

@@ -177,3 +177,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .login-panel { background: var(--cream); }
 .login-card .login-photo { display: none; }
 @media (max-width: 760px) { .login-hero .brand-logo { height: 72px; } }
+
+/* equipe: descrição de atuação abaixo do nome */
+.person-cell { align-items: flex-start; }
+.person-cell small { display: block; margin-top: 3px; max-width: 46ch; font-size: 12px; font-weight: 400; line-height: 1.4; }
+.data-table td:first-child { min-width: 260px; }
