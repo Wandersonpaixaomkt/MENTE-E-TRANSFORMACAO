@@ -14,6 +14,27 @@ const SPECIALTIES = [
   "Psicoterapia",
 ];
 
+const pad2 = (n) => String(n).padStart(2, "0");
+const dateKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const todayKey = () => dateKey(new Date());
+const addDays = (key, days) => { const d = new Date(`${key}T12:00:00`); d.setDate(d.getDate() + days); return dateKey(d); };
+const monthOf = (key) => key.slice(0, 7);
+const shiftMonth = (month, delta) => { const [y, m] = month.split("-").map(Number); return dateKey(new Date(y, m - 1 + delta, 1)).slice(0, 7); };
+const timeToMin = (time) => { const [h, m] = time.split(":").map(Number); return h * 60 + m; };
+const longDate = (key) => new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${key}T12:00:00`));
+const monthTitle = (month) => new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date(`${month}-01T12:00:00`));
+const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const SESSION_MINUTES = 60;
+const SLOTS = Array.from({ length: 10 }, (_, i) => `${pad2(8 + i)}:00`);
+
+function seedUnavailability() {
+  const today = todayKey();
+  return [
+    { id: "una-1", professionalId: "prof-lorrayne", date: addDays(today, 2), allDay: true, start: "", end: "", note: "Exemplo de dia indisponível" },
+    { id: "una-2", professionalId: "prof-eduardo", date: addDays(today, 1), allDay: false, start: "13:00", end: "18:00", note: "Exemplo de horário indisponível" },
+  ];
+}
+
 const demoState = {
   clinic: {
     name: "Clínica Mente & Transformação",
@@ -34,6 +55,7 @@ const demoState = {
   accounts: [
     { username: "dravania", role: "admin", hash: "c117add62f69b58a461d8e4550203b6e314d282d579291a933fbf813f12af3c4" },
   ],
+  unavailability: seedUnavailability(),
   patients: [
     {
       id: "case-miguel",
@@ -80,15 +102,15 @@ const demoState = {
   sessions: {
     "case-miguel": {
       "prof-lorrayne": [
-        { id: "s1", date: "2026-10-27", objective: "Entrevista inicial e observação clínica", status: "Realizada" },
-        { id: "s2", date: "2026-11-03", objective: "Atividade de vínculo e comunicação", status: "Agendada" },
+        { id: "s1", date: "2026-10-27", time: "09:00", objective: "Entrevista inicial e observação clínica", status: "Realizada" },
+        { id: "s2", date: "2026-11-03", time: "09:00", objective: "Atividade de vínculo e comunicação", status: "Agendada" },
       ],
     },
   },
 };
 
 let state = loadState();
-let ui = { role: null, account: null, newAccess: null, editProfessionalId: null, view: "dashboard", activeCaseId: "case-miguel", professionalId: "prof-lorrayne", filterSpecialty: "Todas", caseTab: "registro" };
+let ui = { role: null, account: null, newAccess: null, editProfessionalId: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: "case-miguel", professionalId: "prof-lorrayne", filterSpecialty: "Todas", caseTab: "registro" };
 
 /* Acesso: a senha nunca é guardada, só o hash (SHA-256).
    ATENÇÃO: sem servidor, isto é apenas uma barreira de tela. Quem tiver acesso ao navegador ou
@@ -146,7 +168,9 @@ function generatePassword(length = 10) {
 function loadState() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : structuredClone(demoState);
+    const loaded = stored ? JSON.parse(stored) : structuredClone(demoState);
+    loaded.unavailability ||= [];
+    return loaded;
   } catch {
     return structuredClone(demoState);
   }
@@ -193,7 +217,47 @@ function getProfessional(id) { return state.professionals.find((professional) =>
 function getAssigned(patient) { return patient ? patient.assignedIds.map(getProfessional).filter(Boolean) : []; }
 function patientReports(patientId) { return state.reports[patientId] || {}; }
 function patientSessions(patientId, professionalId) { return state.sessions[patientId]?.[professionalId] || []; }
-function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function professionalSessions(professionalId) {
+  return state.patients.flatMap((patient) => patientSessions(patient.id, professionalId).map((session) => ({ patient, session })));
+}
+
+function busyBlocks(professionalId, date) {
+  const blocks = state.unavailability.filter((item) => item.professionalId === professionalId && item.date === date).map((item) => ({ kind: "off", start: item.allDay ? 0 : timeToMin(item.start), end: item.allDay ? 1440 : timeToMin(item.end) }));
+  professionalSessions(professionalId).forEach(({ session }) => { if (session.date === date && session.time && session.status === "Agendada") blocks.push({ kind: "session", start: timeToMin(session.time), end: timeToMin(session.time) + SESSION_MINUTES }); });
+  ui.draftSessions.filter((draft) => draft.professionalId === professionalId && draft.date === date).forEach((draft) => blocks.push({ kind: "draft", start: timeToMin(draft.time), end: timeToMin(draft.time) + SESSION_MINUTES }));
+  return blocks;
+}
+
+function slotKind(professionalId, date, time) {
+  const start = timeToMin(time), end = start + SESSION_MINUTES;
+  return busyBlocks(professionalId, date).find((block) => start < block.end && block.start < end)?.kind || "free";
+}
+
+const freeSlots = (professionalId, date) => date < todayKey() ? [] : SLOTS.filter((time) => slotKind(professionalId, date, time) === "free");
+
+function conflictMessage(professionalId, date, time) {
+  if (!date || !time) return "Informe o dia e o horário.";
+  if (date < todayKey()) return "Escolha uma data a partir de hoje.";
+  const kind = slotKind(professionalId, date, time);
+  if (kind === "off") return "O profissional marcou indisponibilidade nesse dia e horário.";
+  if (kind !== "free") return "O profissional já tem atendimento marcado nesse horário.";
+  return "";
+}
+
+function calState(scope) {
+  if (scope === "agenda") return ui.agenda;
+  return ui.sched[scope] ||= { month: monthOf(todayKey()), date: null };
+}
+
+function monthCalendar(scope, month, cellFor, compact = false) {
+  const first = new Date(`${month}-01T12:00:00`);
+  const days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const cells = Array(first.getDay()).fill('<span class="cal-blank"></span>');
+  for (let day = 1; day <= days; day++) cells.push(cellFor(`${month}-${pad2(day)}`, day));
+  return `<div class="calendar ${compact ? "compact" : ""}"><div class="calendar-head"><button type="button" class="cal-nav" data-cal-nav="${scope}|-1" aria-label="Mês anterior">‹</button><strong>${monthTitle(month)}</strong><button type="button" class="cal-nav" data-cal-nav="${scope}|1" aria-label="Próximo mês">›</button></div><div class="calendar-grid">${WEEKDAYS.map((day) => `<span class="cal-weekday">${day}</span>`).join("")}${cells.join("")}</div></div>`;
+}
+
+function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; ui.draftSessions = []; ui.draftAssigned = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 
 function toast(message, isError = false) {
   const region = document.querySelector("#toast-region");
@@ -280,6 +344,7 @@ function navItems() {
   return [
     ["dashboard", "◫", "Meu painel"],
     ["my-cases", "◎", "Meus atendimentos"],
+    ["agenda", "▦", "Minha agenda"],
     ["reports", "▧", "Relatório integrado"],
   ];
 }
@@ -315,7 +380,7 @@ function shellTemplate(content) {
 }
 
 function pageLabel() {
-  const labels = { dashboard: "Visão geral", professionals: "Profissionais", anamnese: "Nova anamnese", assignments: "Encaminhamentos", "my-cases": "Meus atendimentos", "case-detail": "Acompanhamento do caso", reports: "Relatório integrado" };
+  const labels = { dashboard: "Visão geral", professionals: "Profissionais", anamnese: "Nova anamnese", assignments: "Encaminhamentos", "my-cases": "Meus atendimentos", agenda: "Minha agenda", "case-detail": "Acompanhamento do caso", reports: "Relatório integrado" };
   return labels[ui.view] || "Painel";
 }
 
@@ -354,6 +419,43 @@ function adminDashboard() {
         <div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>Relatório integrado disponível</strong><span>25 out · Caso Luíza Nascimento</span></div></div>
       </div></article>
     </section>`;
+}
+
+function agendaView() {
+  const professional = getProfessional(ui.professionalId);
+  if (!professional) return emptyState("Profissional não encontrado", "Entre novamente para ver a sua agenda.");
+  const { month, date } = ui.agenda;
+  const calendar = monthCalendar("agenda", month, (key, day) => {
+    const blocks = state.unavailability.filter((item) => item.professionalId === professional.id && item.date === key);
+    const sessions = professionalSessions(professional.id).filter(({ session }) => session.date === key && session.status === "Agendada");
+    const allDay = blocks.some((item) => item.allDay), partial = blocks.length > 0 && !allDay;
+    const tag = allDay ? "Indisponível" : partial ? "Parcial" : sessions.length ? `${sessions.length} atend.` : "";
+    return `<button type="button" class="cal-day ${key === todayKey() ? "is-today" : ""} ${key === date ? "is-selected" : ""} ${key < todayKey() ? "is-past" : ""} ${allDay ? "has-off" : ""} ${partial ? "has-partial" : ""} ${sessions.length ? "has-session" : ""}" data-cal-day="agenda|${key}"><b>${day}</b>${tag ? `<span class="cal-tag">${tag}</span>` : ""}</button>`;
+  });
+  return `
+    ${sectionHeading("Minha agenda", "Marque os dias e horários em que você NÃO poderá atender. A administração só agenda atendimentos nos horários livres.")}
+    <div class="split-layout">
+      <article class="panel content-panel">${calendar}<div class="calendar-legend"><span><i class="dot off"></i>Indisponível o dia todo</span><span><i class="dot partial"></i>Indisponível em parte do dia</span><span><i class="dot session"></i>Atendimento agendado</span></div></article>
+      <aside class="panel form-card">${agendaDayPanel(professional, date)}</aside>
+    </div>`;
+}
+
+function agendaDayPanel(professional, date) {
+  if (!date) return `<h2>Selecione um dia</h2><p>Clique em um dia do calendário para marcar sua indisponibilidade ou ver os atendimentos.</p>`;
+  const blocks = state.unavailability.filter((item) => item.professionalId === professional.id && item.date === date).sort((a, b) => (a.allDay ? "" : a.start).localeCompare(b.allDay ? "" : b.start));
+  const sessions = professionalSessions(professional.id).filter(({ session }) => session.date === date).sort((x, y) => (x.session.time || "").localeCompare(y.session.time || ""));
+  const past = date < todayKey();
+  return `<h2>${escapeHTML(longDate(date))}</h2>
+    <div class="day-list">
+      ${blocks.map((item) => `<div class="day-item off"><div><strong>${item.allDay ? "Indisponível o dia todo" : `Indisponível ${escapeHTML(item.start)}–${escapeHTML(item.end)}`}</strong>${item.note ? `<span>${escapeHTML(item.note)}</span>` : ""}</div>${past ? "" : `<button class="button danger small" type="button" data-remove-unavailability="${item.id}">Remover</button>`}</div>`).join("")}
+      ${sessions.map(({ patient, session }) => `<div class="day-item session"><div><strong>${session.time ? escapeHTML(session.time) : "Horário a definir"} · ${escapeHTML(patient.name)}</strong><span>${escapeHTML(session.objective)} · ${escapeHTML(session.status)}</span></div></div>`).join("")}
+      ${blocks.length || sessions.length ? "" : `<div class="empty-inline">Nada marcado neste dia.</div>`}
+    </div>
+    ${past ? `<p class="cell-muted">Este dia já passou, então não é possível marcar indisponibilidade.</p>` : `<form id="unavailability-form" class="unavailability-form"><h3>Marcar indisponibilidade</h3>
+      <div class="choice-row"><label><input type="radio" name="mode" value="day" checked /> Dia todo</label><label><input type="radio" name="mode" value="time" /> Somente um horário</label></div>
+      <div class="form-grid conditional hidden" id="time-fields"><div class="field"><label for="una-start">Das</label><input id="una-start" name="start" type="time" value="08:00" /></div><div class="field"><label for="una-end">Até</label><input id="una-end" name="end" type="time" value="12:00" /></div></div>
+      <div class="form-grid"><div class="field full"><label for="una-note">Motivo (opcional)</label><input id="una-note" name="note" placeholder="Ex.: curso, consulta, folga" /></div><div class="field"><label for="una-weeks">Repetir toda semana por</label><select id="una-weeks" name="weeks">${[1, 2, 4, 8, 12, 26].map((n) => `<option value="${n}">${n === 1 ? "Só neste dia" : `${n} semanas`}</option>`).join("")}</select></div></div>
+      <div class="form-actions"><button class="button" type="submit">Marcar indisponível</button></div></form>`}`;
 }
 
 function professionalDashboard() {
@@ -439,22 +541,46 @@ function processAside(current) {
 
 function assignmentsView() {
   const patient = getPatient();
-  const assignedIds = new Set(patient?.assignedIds || []);
+  const assignedIds = new Set(ui.draftAssigned || patient?.assignedIds || []);
+  const selectedProfessionals = [...assignedIds].map(getProfessional).filter(Boolean);
   const listed = ui.filterSpecialty === "Todas" ? state.professionals : state.professionals.filter((professional) => professional.specialty === ui.filterSpecialty);
   return `
     ${sectionHeading("Encaminhar profissionais", "Selecione a equipe que acompanhará este caso individualmente.")}
     <div class="split-layout">
       <article class="panel form-card">
         ${patient ? `<div class="assignment-patient"><span class="case-avatar">${initials(patient.name)}</span><div><h3>${escapeHTML(patient.name)}</h3><span>${ageFromDate(patient.birthDate)} · Anamnese criada em ${dateLabel(patient.createdAt)}</span></div>${statusTag(patient.status)}</div>` : `<div class="empty-state"><div class="empty-icon">◎</div><h2>Nenhuma ficha selecionada</h2><p>Crie uma anamnese antes de fazer um encaminhamento.</p><button class="button" type="button" data-nav="anamnese">Iniciar anamnese</button></div>`}
-        ${patient ? `<section class="form-section"><div class="form-section-title"><div><h3>Equipe multidisciplinar</h3><p>Clique nos profissionais que participarão da investigação e do plano de cuidado.</p></div></div><div class="specialty-filter">${["Todas", ...SPECIALTIES.filter((specialty) => state.professionals.some((item) => item.specialty === specialty))].map((specialty) => `<button type="button" class="filter-chip ${ui.filterSpecialty === specialty ? "active" : ""}" data-filter-specialty="${escapeHTML(specialty)}">${escapeHTML(specialty)}</button>`).join("")}</div><div class="professional-options">${listed.map((professional) => `<label class="professional-option ${assignedIds.has(professional.id) ? "selected" : ""}"><input type="checkbox" name="assigned-professional" value="${professional.id}" ${assignedIds.has(professional.id) ? "checked" : ""}/><span class="mini-avatar">${initials(professional.name)}</span><span><strong>${escapeHTML(professional.name)}</strong><span>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.code)}</span></span><span class="choice-check">${assignedIds.has(professional.id) ? "✓" : ""}</span></label>`).join("") || emptyInline("Não há profissionais nesta especialidade.")}</div></section><div class="form-actions"><button class="button secondary" type="button" data-nav="anamnese">← Voltar</button><button class="button" id="save-assignment" type="button">Salvar encaminhamento</button></div>` : ""}
+        ${patient ? `<section class="form-section"><div class="form-section-title"><div><h3>Equipe multidisciplinar</h3><p>Clique nos profissionais que participarão da investigação e do plano de cuidado.</p></div></div><div class="specialty-filter">${["Todas", ...SPECIALTIES.filter((specialty) => state.professionals.some((item) => item.specialty === specialty))].map((specialty) => `<button type="button" class="filter-chip ${ui.filterSpecialty === specialty ? "active" : ""}" data-filter-specialty="${escapeHTML(specialty)}">${escapeHTML(specialty)}</button>`).join("")}</div><div class="professional-options">${listed.map((professional) => `<label class="professional-option ${assignedIds.has(professional.id) ? "selected" : ""}"><input type="checkbox" name="assigned-professional" value="${professional.id}" ${assignedIds.has(professional.id) ? "checked" : ""}/><span class="mini-avatar">${initials(professional.name)}</span><span><strong>${escapeHTML(professional.name)}</strong><span>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.code)}</span></span><span class="choice-check">${assignedIds.has(professional.id) ? "✓" : ""}</span></label>`).join("") || emptyInline("Não há profissionais nesta especialidade.")}</div></section>${scheduleSection(patient, selectedProfessionals)}<div class="form-actions"><button class="button secondary" type="button" data-nav="anamnese">← Voltar</button><button class="button" id="save-assignment" type="button">Salvar encaminhamento</button></div>` : ""}
       </article>
-      <aside class="panel assignment-summary"><h2>Profissionais selecionados</h2><p>Os selecionados receberão uma notificação em seu painel.</p><div class="selection-list" id="selection-list">${assignedSummary(patient)}</div><button class="button secondary wide-action" type="button" data-nav="reports">Visualizar relatório integrado</button></aside>
+      <aside class="panel assignment-summary"><h2>Profissionais selecionados</h2><p>Os selecionados receberão uma notificação em seu painel.</p><div class="selection-list" id="selection-list">${assignedSummary(selectedProfessionals)}</div>${patient ? bookedSummary(patient) : ""}<button class="button secondary wide-action" type="button" data-nav="reports">Visualizar relatório integrado</button></aside>
     </div>`;
 }
 
-function assignedSummary(patient) {
-  const assigned = getAssigned(patient);
-  return assigned.length ? assigned.map((professional) => `<span><strong>${escapeHTML(professional.specialty)}</strong><br>${escapeHTML(professional.name)}</span>`).join("") : `<div class="empty-selection">Selecione pelo menos um profissional.</div>`;
+function assignedSummary(professionals) {
+  return professionals.length ? professionals.map((professional) => `<span><strong>${escapeHTML(professional.specialty)}</strong><br>${escapeHTML(professional.name)}</span>`).join("") : `<div class="empty-selection">Selecione pelo menos um profissional.</div>`;
+}
+
+function bookedSummary(patient) {
+  const items = state.professionals.flatMap((professional) => patientSessions(patient.id, professional.id).filter((session) => session.status === "Agendada").map((session) => ({ professional, session }))).sort((x, y) => `${x.session.date} ${x.session.time || ""}`.localeCompare(`${y.session.date} ${y.session.time || ""}`));
+  const drafts = ui.draftSessions.map((draft) => ({ professional: getProfessional(draft.professionalId), session: draft, draft: true })).filter((item) => item.professional);
+  const rows = [...items, ...drafts].map(({ professional, session, draft }) => `<span><strong>${escapeHTML(dateLabel(session.date))}${session.time ? ` · ${escapeHTML(session.time)}` : ""}</strong>${draft ? ' <em class="draft-flag">a salvar</em>' : ""}<br>${escapeHTML(professional.name)}</span>`).join("");
+  return `<h3 class="booked-title">Atendimentos agendados</h3><div class="selection-list">${rows || `<div class="empty-selection">Nenhum atendimento agendado ainda.</div>`}</div>`;
+}
+
+function scheduleSection(patient, professionals) {
+  return `<section class="form-section"><div class="form-section-title"><div><h3>Agendar atendimentos</h3><p>Escolha o dia e o horário de cada profissional. Dias e horários marcados como indisponíveis pelo profissional ficam bloqueados.</p></div></div>${professionals.map((professional) => schedulerCard(professional, patient)).join("") || emptyInline("Selecione os profissionais acima para agendar os atendimentos.")}</section>`;
+}
+
+function schedulerCard(professional, patient) {
+  const { month, date } = calState(professional.id);
+  const drafts = ui.draftSessions.filter((draft) => draft.professionalId === professional.id);
+  const calendar = monthCalendar(professional.id, month, (key, day) => {
+    const past = key < todayKey(), free = freeSlots(professional.id, key).length, picked = drafts.some((draft) => draft.date === key);
+    const blocked = !past && !free;
+    return `<button type="button" class="cal-day ${key === todayKey() ? "is-today" : ""} ${key === date ? "is-selected" : ""} ${past ? "is-past" : ""} ${blocked ? "is-blocked" : ""} ${picked ? "has-session" : ""}" data-cal-day="${professional.id}|${key}" ${past || blocked ? "disabled" : ""} ${blocked ? 'title="Sem horários livres: profissional indisponível ou com agenda cheia"' : ""}><b>${day}</b>${picked ? '<span class="cal-tag">✓</span>' : ""}</button>`;
+  }, true);
+  const slots = date ? `<div class="slot-picker"><strong>${escapeHTML(longDate(date))}</strong><div class="slot-grid">${SLOTS.map((time) => { const kind = slotKind(professional.id, date, time); return kind === "free" ? `<button type="button" class="slot" data-sched-slot="${professional.id}|${date}|${time}">${time}</button>` : `<span class="slot is-busy" title="${kind === "off" ? "Profissional indisponível" : "Horário já ocupado"}">${time}<small>${kind === "off" ? "indisponível" : "ocupado"}</small></span>`; }).join("")}</div></div>` : `<p class="cell-muted">Clique em um dia disponível para ver os horários.</p>`;
+  const chips = drafts.map((draft) => `<span class="draft-chip">${escapeHTML(dateLabel(draft.date))} · ${escapeHTML(draft.time)}<button type="button" data-remove-draft="${draft.id}" aria-label="Remover atendimento de ${escapeHTML(dateLabel(draft.date))}">×</button></span>`).join("");
+  return `<div class="scheduler-card"><div class="scheduler-head"><span class="mini-avatar">${initials(professional.name)}</span><div><strong>${escapeHTML(professional.name)}</strong><span class="cell-muted">${escapeHTML(professional.specialty)}</span></div></div><div class="scheduler-body">${calendar}<div>${slots}</div></div>${chips ? `<div class="draft-list">${chips}</div>` : ""}</div>`;
 }
 
 function myCasesView() {
@@ -487,7 +613,7 @@ function anamneseReadOnly(patient) {
 }
 
 function scheduleView(patient, professional, sessions) {
-  return `<div class="split-layout"><article class="panel form-card"><h2>Agenda de atendimentos</h2><p>Registre as sessões previstas e acompanhe o que já foi realizado.</p><div class="session-list">${sessions.map((session) => `<div class="session-item"><span class="session-calendar"><b>${new Date(`${session.date}T12:00:00`).getDate().toString().padStart(2, "0")}</b>${new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(`${session.date}T12:00:00`)).replace(".", "")}</span><div><strong>${escapeHTML(session.objective)}</strong><span>${dateLabel(session.date)}</span></div><span class="session-status">${statusTag(session.status)}</span></div>`).join("") || emptyInline("Nenhuma sessão registrada ainda.")}</div></article><form class="panel form-card" id="session-form"><h2>Adicionar sessão</h2><p>Crie um lembrete para o próximo atendimento.</p><div class="form-grid"><div class="field"><label for="session-date">Data</label><input id="session-date" name="date" type="date" required /></div><div class="field"><label for="session-status">Status</label><select id="session-status" name="status"><option>Agendada</option><option>Realizada</option></select></div><div class="field full"><label for="session-objective">Objetivo ou observação</label><input id="session-objective" name="objective" required placeholder="Ex.: Entrevista inicial com responsáveis" /></div></div><div class="form-actions"><button class="button" type="submit">Adicionar à agenda</button></div></form></div>`;
+  return `<div class="split-layout"><article class="panel form-card"><h2>Agenda de atendimentos</h2><p>Registre as sessões previstas e acompanhe o que já foi realizado.</p><div class="session-list">${sessions.map((session) => `<div class="session-item"><span class="session-calendar"><b>${new Date(`${session.date}T12:00:00`).getDate().toString().padStart(2, "0")}</b>${new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(`${session.date}T12:00:00`)).replace(".", "")}</span><div><strong>${escapeHTML(session.objective)}</strong><span>${dateLabel(session.date)}${session.time ? ` · ${escapeHTML(session.time)}` : ""}</span></div><span class="session-status">${statusTag(session.status)}</span></div>`).join("") || emptyInline("Nenhuma sessão registrada ainda.")}</div></article><form class="panel form-card" id="session-form"><h2>Adicionar sessão</h2><p>Crie um lembrete para o próximo atendimento.</p><div class="form-grid"><div class="field"><label for="session-date">Data</label><input id="session-date" name="date" type="date" required /></div><div class="field"><label for="session-time">Horário</label><select id="session-time" name="time">${SLOTS.map((time) => `<option>${time}</option>`).join("")}</select></div><div class="field"><label for="session-status">Status</label><select id="session-status" name="status"><option>Agendada</option><option>Realizada</option></select></div><div class="field full"><label for="session-objective">Objetivo ou observação</label><input id="session-objective" name="objective" required placeholder="Ex.: Entrevista inicial com responsáveis" /></div></div><div class="form-actions"><button class="button" type="submit">Adicionar à agenda</button></div></form></div>`;
 }
 
 function reportsView() {
@@ -518,11 +644,13 @@ function emptyState(title, text, buttonLabel = "", target = "") { return `<div c
 function viewTemplate() {
   if (!ui.role) return loginTemplate();
   if (ui.role !== "admin" && ADMIN_VIEWS.includes(ui.view)) ui.view = "dashboard";
+  if (ui.role === "admin" && ui.view === "agenda") ui.view = "dashboard";
   let content;
   if (ui.view === "professionals") content = professionalsView();
   else if (ui.view === "anamnese") content = anamneseView();
   else if (ui.view === "assignments") content = assignmentsView();
   else if (ui.view === "my-cases") content = myCasesView();
+  else if (ui.view === "agenda") content = agendaView();
   else if (ui.view === "case-detail") content = caseDetailView();
   else if (ui.view === "reports") content = reportsView();
   else content = ui.role === "admin" ? adminDashboard() : professionalDashboard();
@@ -537,7 +665,7 @@ function render() {
 function bindEvents() {
   document.querySelector("#login-form")?.addEventListener("submit", submitLogin);
   document.querySelectorAll("[data-nav]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.nav)));
-  document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", () => { ui.role = null; ui.account = null; ui.newAccess = null; ui.editProfessionalId = null; ui.view = "dashboard"; render(); }));
+  document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", () => { ui.role = null; ui.account = null; ui.newAccess = null; ui.editProfessionalId = null; ui.draftSessions = []; ui.draftAssigned = null; ui.view = "dashboard"; render(); }));
   document.querySelectorAll("[data-open-notices]").forEach((button) => button.addEventListener("click", () => { toast(ui.role === "admin" ? "Você possui encaminhamentos e atualizações para revisar." : "Estes são os casos encaminhados para seu perfil."); setView(ui.role === "admin" ? "assignments" : "my-cases"); }));
   document.querySelectorAll("[data-open-assignment]").forEach((button) => button.addEventListener("click", () => { ui.activeCaseId = button.dataset.openAssignment; setView("assignments"); }));
   document.querySelectorAll("[data-open-case]").forEach((button) => button.addEventListener("click", () => { ui.activeCaseId = button.dataset.openCase; ui.caseTab = "registro"; setView("case-detail"); }));
@@ -566,7 +694,31 @@ function bindEvents() {
   document.querySelectorAll('input[name="hypothesis"]').forEach((input) => input.addEventListener("change", toggleConditionalFields));
   document.querySelectorAll('input[name="diagnosis"]').forEach((input) => input.addEventListener("change", toggleConditionalFields));
   document.querySelector("#diagnosis-file")?.addEventListener("change", (event) => { document.querySelector("#file-name").textContent = event.target.files?.[0]?.name || "Nenhum arquivo selecionado"; });
-  document.querySelectorAll('input[name="assigned-professional"]').forEach((input) => input.addEventListener("change", updateAssignmentUI));
+  document.querySelectorAll('input[name="assigned-professional"]').forEach((input) => input.addEventListener("change", () => {
+    const patient = getPatient();
+    const picked = new Set(ui.draftAssigned || patient?.assignedIds || []);
+    if (input.checked) picked.add(input.value); else picked.delete(input.value);
+    ui.draftAssigned = [...picked];
+    ui.draftSessions = ui.draftSessions.filter((draft) => picked.has(draft.professionalId));
+    render();
+  }));
+  document.querySelectorAll("[data-cal-nav]").forEach((button) => button.addEventListener("click", () => { const [scope, delta] = button.dataset.calNav.split("|"); const cal = calState(scope); cal.month = shiftMonth(cal.month, Number(delta)); render(); }));
+  document.querySelectorAll("[data-cal-day]").forEach((button) => button.addEventListener("click", () => { const [scope, date] = button.dataset.calDay.split("|"); calState(scope).date = date; render(); }));
+  document.querySelectorAll("[data-sched-slot]").forEach((button) => button.addEventListener("click", () => {
+    const [professionalId, date, time] = button.dataset.schedSlot.split("|");
+    const problem = conflictMessage(professionalId, date, time);
+    if (problem) return toast(problem, true);
+    ui.draftSessions.push({ id: uid("draft"), professionalId, date, time });
+    render();
+  }));
+  document.querySelectorAll("[data-remove-draft]").forEach((button) => button.addEventListener("click", () => { ui.draftSessions = ui.draftSessions.filter((draft) => draft.id !== button.dataset.removeDraft); render(); }));
+  document.querySelectorAll("[data-remove-unavailability]").forEach((button) => button.addEventListener("click", () => {
+    const item = state.unavailability.find((entry) => entry.id === button.dataset.removeUnavailability);
+    if (!item || item.professionalId !== ui.professionalId) return;
+    state.unavailability = state.unavailability.filter((entry) => entry !== item); saveState(); render(); toast("Indisponibilidade removida.");
+  }));
+  document.querySelector("#unavailability-form")?.addEventListener("submit", saveUnavailability);
+  document.querySelectorAll('#unavailability-form input[name="mode"]').forEach((input) => input.addEventListener("change", () => document.querySelector("#time-fields").classList.toggle("hidden", document.querySelector('#unavailability-form input[name="mode"]:checked').value !== "time")));
   document.querySelector("#save-assignment")?.addEventListener("click", saveAssignment);
   document.querySelector("#professional-record-form")?.addEventListener("submit", saveProfessionalRecord);
   document.querySelector("#session-form")?.addEventListener("submit", saveSession);
@@ -676,19 +828,44 @@ function submitAnamnese(event) {
   state.patients.unshift(patient); ui.activeCaseId = patient.id; saveState(); ui.filterSpecialty = "Todas"; setView("assignments"); toast("Ficha de anamnese salva. Agora selecione os profissionais.");
 }
 
-function updateAssignmentUI() {
-  document.querySelectorAll(".professional-option").forEach((option) => { const checked = option.querySelector("input").checked; option.classList.toggle("selected", checked); option.querySelector(".choice-check").textContent = checked ? "✓" : ""; });
-  const labels = [...document.querySelectorAll('input[name="assigned-professional"]:checked')].map((input) => getProfessional(input.value)).filter(Boolean);
-  const list = document.querySelector("#selection-list");
-  if (list) list.innerHTML = labels.length ? labels.map((professional) => `<span><strong>${escapeHTML(professional.specialty)}</strong><br>${escapeHTML(professional.name)}</span>`).join("") : `<div class="empty-selection">Selecione pelo menos um profissional.</div>`;
-}
-
 function saveAssignment() {
   const patient = getPatient();
   if (!patient) return;
-  const selected = [...document.querySelectorAll('input[name="assigned-professional"]:checked')].map((input) => input.value);
+  const selected = ui.draftAssigned || patient.assignedIds;
   if (!selected.length) return toast("Selecione ao menos um profissional para encaminhar o caso.", true);
-  patient.assignedIds = selected; patient.status = "Em acompanhamento"; saveState(); render(); toast("Encaminhamento salvo. Os profissionais selecionados foram notificados.");
+  const pending = ui.draftSessions;
+  ui.draftSessions = [];
+  const conflict = pending.map((draft) => ({ draft, problem: conflictMessage(draft.professionalId, draft.date, draft.time) })).find((item) => item.problem);
+  if (conflict) { ui.draftSessions = pending; return toast(`${getProfessional(conflict.draft.professionalId)?.name}: ${conflict.problem}`, true); }
+  pending.forEach((draft) => {
+    state.sessions[patient.id] ||= {}; state.sessions[patient.id][draft.professionalId] ||= [];
+    state.sessions[patient.id][draft.professionalId].push({ id: uid("session"), date: draft.date, time: draft.time, objective: "Atendimento agendado pela administração", status: "Agendada" });
+    state.sessions[patient.id][draft.professionalId].sort((x, y) => `${x.date} ${x.time || ""}`.localeCompare(`${y.date} ${y.time || ""}`));
+  });
+  patient.assignedIds = selected; patient.status = "Em acompanhamento"; ui.draftAssigned = null;
+  saveState(); render(); toast(pending.length ? `Encaminhamento salvo e ${pending.length} atendimento${pending.length === 1 ? "" : "s"} agendado${pending.length === 1 ? "" : "s"}.` : "Encaminhamento salvo. Os profissionais selecionados foram notificados.");
+}
+
+async function saveUnavailability(event) {
+  event.preventDefault();
+  const professional = getProfessional(ui.professionalId), date = ui.agenda.date;
+  if (ui.role !== "professional" || !professional || !date) return;
+  if (date < todayKey()) return toast("Escolha uma data a partir de hoje.", true);
+  const data = new FormData(event.currentTarget), allDay = data.get("mode") === "day";
+  const start = String(data.get("start") || ""), end = String(data.get("end") || "");
+  if (!allDay && (!start || !end || timeToMin(start) >= timeToMin(end))) return toast("Informe um horário inicial anterior ao horário final.", true);
+  const weeks = Math.max(1, Number(data.get("weeks")) || 1), note = data.get("note").trim();
+  let added = 0, warned = false;
+  for (let i = 0; i < weeks; i++) {
+    const day = addDays(date, i * 7);
+    const duplicate = state.unavailability.some((item) => item.professionalId === professional.id && item.date === day && item.allDay === allDay && item.start === (allDay ? "" : start) && item.end === (allDay ? "" : end));
+    if (duplicate) continue;
+    state.unavailability.push({ id: uid("una"), professionalId: professional.id, date: day, allDay, start: allDay ? "" : start, end: allDay ? "" : end, note });
+    added++;
+    if (professionalSessions(professional.id).some(({ session }) => session.date === day && session.status === "Agendada" && session.time && (allDay || (timeToMin(session.time) < timeToMin(end) && timeToMin(start) < timeToMin(session.time) + SESSION_MINUTES)))) warned = true;
+  }
+  saveState(); render();
+  toast(warned ? "Indisponibilidade salva, mas há atendimento já agendado nesse período. Avise a administração." : added ? `Indisponibilidade marcada em ${added} dia${added === 1 ? "" : "s"}.` : "Esse período já estava marcado.", warned);
 }
 
 function saveProfessionalRecord(event) {
@@ -706,9 +883,11 @@ function saveSession(event) {
   event.preventDefault();
   const patient = getPatient(); const professional = getProfessional(ui.professionalId); if (!patient || !professional) return;
   const data = new FormData(event.currentTarget);
+  const problem = data.get("status") === "Agendada" ? conflictMessage(professional.id, data.get("date"), data.get("time")) : "";
+  if (problem) return toast(problem, true);
   state.sessions[patient.id] ||= {}; state.sessions[patient.id][professional.id] ||= [];
-  state.sessions[patient.id][professional.id].push({ id: uid("session"), date: data.get("date"), objective: data.get("objective").trim(), status: data.get("status") });
-  state.sessions[patient.id][professional.id].sort((a, b) => a.date.localeCompare(b.date));
+  state.sessions[patient.id][professional.id].push({ id: uid("session"), date: data.get("date"), time: data.get("time"), objective: data.get("objective").trim(), status: data.get("status") });
+  state.sessions[patient.id][professional.id].sort((a, b) => `${a.date} ${a.time || ""}`.localeCompare(`${b.date} ${b.time || ""}`));
   saveState(); render(); toast("Sessão adicionada à agenda.");
 }
 
