@@ -1,6 +1,5 @@
-/* Mente & Transformação — protótipo funcional com persistência local */
+/* Mente & Transformação — painel clínico com dados no Supabase */
 
-const STORAGE_KEY = "mente-transformacao-clinic-v5";
 const SPECIALTIES = [
   "Psicologia",
   "Psicopedagogia",
@@ -27,134 +26,27 @@ const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const SESSION_MINUTES = 60;
 const SLOTS = Array.from({ length: 10 }, (_, i) => `${pad2(8 + i)}:00`);
 
-function seedUnavailability() {
-  const today = todayKey();
-  return [
-    { id: "una-1", professionalId: "prof-lorrayne", date: addDays(today, 2), allDay: true, start: "", end: "", note: "Exemplo de dia indisponível" },
-    { id: "una-2", professionalId: "prof-eduardo", date: addDays(today, 1), allDay: false, start: "13:00", end: "18:00", note: "Exemplo de horário indisponível" },
-  ];
-}
-
-const demoState = {
-  clinic: {
-    name: "Clínica Mente & Transformação",
-    address: "Av. Exemplo, 1200 — Centro",
-    phone: "(00) 0000-0000",
-    email: "contato@menteetransformacao.com",
-    director: "Dra. Vânia Ferreira Garcia",
-    directorRole: "Psicóloga · CRP 10/10102 · Psicopedagoga especialista em Autismo",
-    directorCode: "CRP 10/10102",
-  },
-  professionals: [
-    { id: "prof-lorrayne", name: "Lorrayne Kendaly Luna Costa", specialty: "Neuropsicologia", code: "CRP 10/11303", focus: "Avaliação neuropsicológica, psicoterapia infantil e orientação parental. Pós-graduanda em Intervenção ABA para Autismo e Deficiência Intelectual." },
-    { id: "prof-gabrielly", name: "Gabrielly Lima", specialty: "Nutrição", code: "CRN-7 17462/P", focus: "Nutrição clínica e hospitalar. Especialização em andamento em Nutrição em Neuropsiquiatria." },
-    { id: "prof-eduardo", name: "Eduardo Vilhena", specialty: "Psicologia", code: "CRP 10/11278", focus: "Terapia Cognitivo-Comportamental (TCC), avaliação psicológica e acompanhamento em saúde mental." },
-    { id: "prof-psicanalista", name: "Psicóloga e psicanalista (nome a informar)", specialty: "Psicologia", code: "", focus: "Escuta psicanalítica para adolescentes, adultos, idosos e casais. Especialista em Saúde Mental." },
-    { id: "prof-costa", name: "Dr. Costa", specialty: "Fonoaudiologia", code: "", focus: "Fonoaudiólogo e terapeuta ABA. Comunicação e linguagem, motricidade orofacial e dificuldades alimentares em crianças e adultos neurodivergentes." },
-    { id: "prof-audrey", name: "Audrey Andrade", specialty: "Neuropsicologia", code: "CRP 10/06517", focus: "Neuropsicologia." },
-    { id: "prof-moniele", name: "Moniele Matos", specialty: "Psicopedagogia", code: "", focus: "Psicopedagoga clínica, especialista em neuropsicologia." },
-    { id: "prof-nessia", name: "Néssia Arruda", specialty: "Psicomotricidade", code: "", focus: "Psicomotricista." },
-    { id: "prof-laiane", name: "Laiane de Paula", specialty: "Nutrição", code: "CRN 7/17265", focus: "Nutricionista." },
-  ],
-  accounts: [
-    { username: "dravania", role: "admin", hash: "c117add62f69b58a461d8e4550203b6e314d282d579291a933fbf813f12af3c4" },
-  ],
-  unavailability: seedUnavailability(),
-  patients: [
-    {
-      id: "case-miguel",
-      name: "Miguel Alves",
-      gender: "Masculino",
-      birthDate: "2019-06-15",
-      cpf: "000.000.000-00",
-      guardians: [
-        { relation: "Mãe", name: "Mariana Alves", cpf: "000.000.000-00", phone: "(00) 90000-0000", email: "mariana@email.com" },
-        { relation: "Pai", name: "Carlos Alves", cpf: "000.000.000-00", phone: "(00) 90000-0000", email: "carlos@email.com" },
-      ],
-      hypothesis: { has: true, narrative: "Família relata dificuldades na comunicação e interação em contextos sociais." },
-      diagnosis: { has: true, fileName: "avaliacao-escolar.pdf" },
-      familyComplaint: "A família observa atraso na fala, frustração ao comunicar necessidades e dificuldades de adaptação na escola.",
-      assignedIds: ["prof-lorrayne", "prof-costa"],
-      status: "Em acompanhamento",
-      createdAt: "2026-10-21",
-    },
-    {
-      id: "case-luiza",
-      name: "Luíza Nascimento",
-      gender: "Feminino",
-      birthDate: "2016-01-23",
-      cpf: "000.000.000-00",
-      guardians: [{ relation: "Mãe", name: "Rafaela Nascimento", cpf: "000.000.000-00", phone: "(00) 90000-0000", email: "rafaela@email.com" }],
-      hypothesis: { has: false, narrative: "" },
-      diagnosis: { has: false, fileName: "" },
-      familyComplaint: "A família busca acompanhamento para dificuldades de aprendizagem e organização da rotina escolar.",
-      assignedIds: ["prof-lorrayne", "prof-gabrielly"],
-      status: "Em acompanhamento",
-      createdAt: "2026-10-24",
-    },
-  ],
-  reports: {
-    "case-miguel": {
-      "prof-lorrayne": {
-        complaint: "Observa-se dificuldade de comunicação de necessidades e regulação emocional diante de mudanças de rotina.",
-        plan: "Realizar acolhimento lúdico, observação clínica e orientação parental com foco em previsibilidade e comunicação.",
-        result: "Vínculo terapêutico iniciado. Miguel passou a aceitar melhor a transição entre atividades em sessão.",
-        updatedAt: "2026-10-28",
-      },
-    },
-  },
-  sessions: {
-    "case-miguel": {
-      "prof-lorrayne": [
-        { id: "s1", date: "2026-10-27", time: "09:00", objective: "Entrevista inicial e observação clínica", status: "Realizada" },
-        { id: "s2", date: "2026-11-03", time: "09:00", objective: "Atividade de vínculo e comunicação", status: "Agendada" },
-      ],
-    },
-  },
+const CLINIC = {
+  name: "Clínica Mente & Transformação",
+  address: "Av. Exemplo, 1200 — Centro",
+  phone: "(00) 0000-0000",
+  email: "contato@menteetransformacao.com",
+  director: "Dra. Vânia Ferreira Garcia",
+  directorRole: "Psicóloga · CRP 10/10102 · Psicopedagoga especialista em Autismo",
+  directorCode: "CRP 10/10102",
 };
 
-let state = loadState();
-let ui = { role: null, account: null, newAccess: null, editProfessionalId: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: "case-miguel", professionalId: "prof-lorrayne", filterSpecialty: "Todas", caseTab: "registro" };
+const blankState = () => ({ clinic: CLINIC, professionals: [], accounts: [], unavailability: [], patients: [], reports: {}, sessions: {} });
 
-/* Acesso: a senha nunca é guardada, só o hash (SHA-256).
-   ATENÇÃO: sem servidor, isto é apenas uma barreira de tela. Quem tiver acesso ao navegador ou
-   aos arquivos consegue contorná-la. Autenticação segura exige back-end. */
-function sha256(str) {
-  const bytes = new TextEncoder().encode(str);
-  if (window.crypto?.subtle) {
-    return crypto.subtle.digest('SHA-256', bytes).then(b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join(''));
-  }
-  // alternativa para contextos sem crypto.subtle
-  const K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
-  const H = new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]);
-  const len = bytes.length, total = ((len + 9 + 63) >> 6) << 6, m = new Uint8Array(total);
-  m.set(bytes); m[len] = 0x80;
-  const dv = new DataView(m.buffer); dv.setUint32(total - 4, len * 8, false); dv.setUint32(total - 8, Math.floor(len * 8 / 4294967296), false);
-  const rr = (x, n) => (x >>> n) | (x << (32 - n)), w = new Uint32Array(64);
-  for (let o = 0; o < total; o += 64) {
-    for (let i = 0; i < 16; i++) w[i] = dv.getUint32(o + i * 4, false);
-    for (let i = 16; i < 64; i++) { const a = rr(w[i-15],7) ^ rr(w[i-15],18) ^ (w[i-15] >>> 3), b = rr(w[i-2],17) ^ rr(w[i-2],19) ^ (w[i-2] >>> 10); w[i] = (w[i-16] + a + w[i-7] + b) | 0; }
-    let [a,b,c,d,e,f,g,h] = H;
-    for (let i = 0; i < 64; i++) {
-      const t1 = (h + (rr(e,6) ^ rr(e,11) ^ rr(e,25)) + ((e & f) ^ (~e & g)) + K[i] + w[i]) | 0;
-      const t2 = ((rr(a,2) ^ rr(a,13) ^ rr(a,22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
-      h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
-    }
-    [a,b,c,d,e,f,g,h].forEach((v, i) => (H[i] = (H[i] + v) | 0));
-  }
-  return Promise.resolve([...H].map(x => (x >>> 0).toString(16).padStart(8, '0')).join(''));
-}
+let state = blankState();
+let ui = { role: null, account: null, setup: false, saving: false, newAccess: null, editProfessionalId: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null, filterSpecialty: "Todas", caseTab: "registro" };
 
-const hashPassword = (username, password) => sha256(`mt-portal:${username}:${password}`);
+/* Acesso: login do Supabase Auth. Cada usuário vira um e-mail interno que nunca recebe mensagens.
+   Quem pode ver e alterar cada dado é decidido pelas regras de acesso (RLS) do banco. */
+const db = window.supabase.createClient(window.MT_CONFIG.supabaseUrl, window.MT_CONFIG.supabaseKey);
+const loginEmail = (username) => `${username}@painel.mente-transformacao.invalid`;
 const normUser = (value) => String(value || "").trim().replace(/^@+/, "").toLowerCase();
 const ADMIN_VIEWS = ["professionals", "anamnese", "assignments"];
-
-const LOCK_KEY = "mt-login-lock";
-const readLock = () => { try { return JSON.parse(localStorage.getItem(LOCK_KEY)) || { n: 0, until: 0 }; } catch { return window.__mtLock || { n: 0, until: 0 }; } };
-const writeLock = (value) => { try { localStorage.setItem(LOCK_KEY, JSON.stringify(value)); } catch { window.__mtLock = value; } };
-const lockedFor = () => Math.max(0, Math.ceil((readLock().until - Date.now()) / 1000));
-function registerFailure() { const lock = readLock(); lock.n += 1; if (lock.n >= 5) { lock.until = Date.now() + 30000; lock.n = 0; } writeLock(lock); }
-const clearFailures = () => writeLock({ n: 0, until: 0 });
 
 function suggestUsername(name) {
   const words = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^a-z\s]/g, " ").split(/\s+/).filter((word) => word && !["dr", "dra"].includes(word));
@@ -169,19 +61,54 @@ function generatePassword(length = 10) {
   return Array.from(crypto.getRandomValues(new Uint32Array(length)), (n) => alphabet[n % alphabet.length]).join("");
 }
 
-function loadState() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    const loaded = stored ? JSON.parse(stored) : structuredClone(demoState);
-    loaded.unavailability ||= [];
-    return loaded;
-  } catch {
-    return structuredClone(demoState);
-  }
+async function loadData() {
+  const results = await Promise.all([
+    db.from("profissionais").select("*").order("nome"),
+    db.from("perfis").select("*"),
+    ui.role === "admin" ? db.from("senhas_acesso").select("*") : { data: [] },
+    db.from("pacientes").select("*").order("criado_em", { ascending: false }),
+    db.from("evolucoes").select("*"),
+    db.from("sessoes").select("*").order("data").order("horario"),
+    db.from("indisponibilidades").select("*"),
+  ]);
+  const failed = results.find((result) => result.error);
+  if (failed) throw failed.error;
+  const [professionals, profiles, passwords, patients, reports, sessions, unavailability] = results.map((result) => result.data);
+  const passwordOf = Object.fromEntries(passwords.map((row) => [row.user_id, row.senha]));
+  const next = blankState();
+  next.professionals = professionals.map((row) => ({ id: row.id, name: row.nome, specialty: row.especialidade, code: row.registro, focus: row.atuacao }));
+  next.accounts = profiles.map((row) => ({ username: row.usuario, role: row.papel === "admin" ? "admin" : "professional", professionalId: row.profissional_id, password: passwordOf[row.user_id] || "" }));
+  next.patients = patients.map((row) => ({ id: row.id, name: row.nome, gender: row.sexo, birthDate: row.nascimento || "", cpf: row.cpf, guardians: row.responsaveis, hypothesis: row.hipotese, diagnosis: row.diagnostico, familyComplaint: row.anamnese, assignedIds: row.profissionais_ids, status: row.status, createdAt: row.criado_em.slice(0, 10) }));
+  reports.forEach((row) => { (next.reports[row.paciente_id] ||= {})[row.profissional_id] = { complaint: row.queixa, plan: row.plano, result: row.resultado, updatedAt: row.atualizado_em }; });
+  sessions.forEach((row) => { ((next.sessions[row.paciente_id] ||= {})[row.profissional_id] ||= []).push({ id: row.id, date: row.data, time: row.horario, objective: row.objetivo, status: row.status }); });
+  next.unavailability = unavailability.map((row) => ({ id: row.id, professionalId: row.profissional_id, date: row.data, allDay: row.dia_todo, start: row.inicio, end: row.fim, note: row.motivo }));
+  state = next;
+  if (!getPatient()) ui.activeCaseId = state.patients[0]?.id || null;
+  if (ui.role === "admin" && !getProfessional(ui.professionalId)) ui.professionalId = state.professionals[0]?.id || null;
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+async function must(query) {
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
+function errorText(error) {
+  if (error?.code === "P0001") return error.message;
+  if (error?.code === "42501") return "Você não tem permissão para esta ação.";
+  return "Não foi possível salvar. Verifique a conexão e tente de novo.";
+}
+
+/* Grava no banco, recarrega os dados e redesenha a tela. Se der erro, o que está na tela é mantido. */
+async function commit(work) {
+  if (ui.saving) return false;
+  ui.saving = true;
+  try { await work(); }
+  catch (error) { console.error(error); toast(errorText(error), true); return false; }
+  finally { ui.saving = false; }
+  try { await loadData(); } catch (error) { console.error(error); toast("Salvo, mas não foi possível atualizar a tela. Recarregue a página.", true); }
+  render();
+  return true;
 }
 
 function uid(prefix) {
@@ -288,18 +215,17 @@ function loginTemplate() {
       <section class="login-panel">
         <div class="login-card">
           <p class="eyebrow" style="color:var(--forest-700)">Acesso ao sistema</p>
-          <h2>Entrar no painel</h2>
-          <p>Use o usuário e a senha fornecidos pela administração da clínica.</p>
+          <h2>${ui.setup ? "Primeiro acesso" : "Entrar no painel"}</h2>
+          <p>${ui.setup ? "Crie o usuário e a senha da administradora da clínica." : "Use o usuário e a senha fornecidos pela administração da clínica."}</p>
           <form id="login-form" novalidate>
             <div class="form-grid">
               <div class="field full"><label for="login-user">Usuário</label><input id="login-user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="seu.usuario" required /></div>
-              <div class="field full"><label for="login-password" id="login-password-label">Senha</label><input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="Sua senha" required /></div>
-              <div class="field full hidden" id="login-confirm-field"><label for="login-confirm">Repita a nova senha</label><input id="login-confirm" name="confirm" type="password" autocomplete="new-password" placeholder="Repita a senha" /></div>
+              <div class="field full"><label for="login-password">${ui.setup ? "Crie uma senha (mínimo 8 caracteres)" : "Senha"}</label><input id="login-password" name="password" type="password" autocomplete="${ui.setup ? "new-password" : "current-password"}" placeholder="Sua senha" required /></div>
+              ${ui.setup ? `<div class="field full"><label for="login-confirm">Repita a senha</label><input id="login-confirm" name="confirm" type="password" autocomplete="new-password" placeholder="Repita a senha" /></div>` : ""}
             </div>
             <p class="form-message" id="login-message" role="alert" hidden></p>
-            <div class="form-actions"><button class="button" type="submit">Entrar</button></div>
+            <div class="form-actions"><button class="button" type="submit">${ui.setup ? "Criar acesso e entrar" : "Entrar"}</button></div>
           </form>
-          <p class="login-note">Acesso de demonstração: usuários e senhas ficam salvos apenas neste navegador.</p>
         </div>
       </section>
     </main>`;
@@ -307,34 +233,48 @@ function loginTemplate() {
 
 async function submitLogin(event) {
   event.preventDefault();
-  const form = event.currentTarget, message = document.querySelector("#login-message");
-  const fail = (text) => { message.textContent = text; message.hidden = false; message.className = "form-message error"; };
-  const wait = lockedFor();
-  if (wait > 0) return fail(`Muitas tentativas. Tente de novo em ${wait}s.`);
+  const form = event.currentTarget, message = document.querySelector("#login-message"), button = form.querySelector('button[type="submit"]');
+  const fail = (text) => { message.textContent = text; message.hidden = false; message.className = "form-message error"; button.disabled = false; };
   const data = new FormData(form), username = normUser(data.get("username")), password = String(data.get("password") || "");
   if (!username || !password) return fail("Informe usuário e senha.");
-  const account = state.accounts.find((item) => item.username === username);
-  if (account && !account.hash) {
-    const confirmField = document.querySelector("#login-confirm-field");
-    if (confirmField.classList.contains("hidden")) {
-      confirmField.classList.remove("hidden");
-      document.querySelector("#login-password-label").textContent = "Crie sua senha";
-      message.textContent = "Primeiro acesso: crie uma senha com pelo menos 8 caracteres e repita no campo abaixo.";
-      message.className = "form-message"; message.hidden = false;
-      return document.querySelector("#login-confirm").focus();
-    }
+  button.disabled = true;
+  if (ui.setup) {
     if (password.length < 8) return fail("A senha precisa ter pelo menos 8 caracteres.");
     if (password !== data.get("confirm")) return fail("As senhas não conferem.");
-    account.hash = await hashPassword(username, password);
-    saveState();
-  } else {
-    const hash = await hashPassword(username, password);
-    if (!account || account.hash !== hash) { registerFailure(); const left = lockedFor(); return fail(left > 0 ? `Muitas tentativas. Tente de novo em ${left}s.` : "Usuário ou senha incorretos."); }
+    const { error } = await db.rpc("criar_primeiro_admin", { p_usuario: username, p_senha: password });
+    if (error) return fail(errorText(error));
+    ui.setup = false;
   }
-  clearFailures();
-  ui.role = account.role; ui.account = account; ui.view = "dashboard"; ui.newAccess = null;
-  if (account.role === "professional") ui.professionalId = account.professionalId;
+  const { error } = await db.auth.signInWithPassword({ email: loginEmail(username), password });
+  if (error) return fail(error.status === 400 ? "Usuário ou senha incorretos." : error.status === 429 ? "Muitas tentativas. Aguarde um pouco e tente de novo." : "Não foi possível entrar. Verifique a conexão.");
+  await startSession();
+}
+
+async function startSession() {
+  const { data: { session } } = await db.auth.getSession();
+  if (!session) return showLogin();
+  const { data: profile, error } = await db.from("perfis").select("*").eq("user_id", session.user.id).maybeSingle();
+  if (error) { await showLogin(); return toast("Não foi possível carregar o seu perfil. Verifique a conexão.", true); }
+  if (!profile) { await db.auth.signOut(); await showLogin(); return toast("Este acesso não está ligado a nenhum perfil da clínica.", true); }
+  ui.role = profile.papel === "admin" ? "admin" : "professional";
+  ui.account = { username: profile.usuario, role: ui.role, professionalId: profile.profissional_id };
+  if (ui.role === "professional") ui.professionalId = profile.profissional_id;
+  ui.view = "dashboard"; ui.newAccess = null;
+  try { await loadData(); } catch (error) { console.error(error); toast("Não foi possível carregar os dados. Verifique a conexão.", true); }
   render();
+}
+
+async function showLogin() {
+  state = blankState();
+  Object.assign(ui, { role: null, account: null, newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null });
+  const { data } = await db.rpc("precisa_configurar");
+  ui.setup = data === true;
+  render();
+}
+
+async function logout() {
+  await db.auth.signOut();
+  await showLogin();
 }
 
 function navItems() {
@@ -367,7 +307,7 @@ function shellTemplate(content) {
         <nav class="sidebar-nav" aria-label="Navegação principal">
           ${navItems().map(([view, icon, label]) => `<button class="nav-item ${activeNav === view ? "active" : ""}" type="button" data-nav="${view}"><span class="nav-icon">${icon}</span>${label}</button>`).join("")}
         </nav>
-        <div class="sidebar-bottom"><strong>Ambiente de demonstração</strong><span>Dados armazenados neste navegador.</span></div>
+        <div class="sidebar-bottom"><strong>Mente e Transformação</strong><span>Dados salvos na nuvem com acesso protegido.</span></div>
       </aside>
       <section class="workspace">
         <header class="topbar">
@@ -669,7 +609,7 @@ function render() {
 function bindEvents() {
   document.querySelector("#login-form")?.addEventListener("submit", submitLogin);
   document.querySelectorAll("[data-nav]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.nav)));
-  document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", () => { ui.role = null; ui.account = null; ui.newAccess = null; ui.editProfessionalId = null; ui.draftSessions = []; ui.draftAssigned = null; ui.view = "dashboard"; render(); }));
+  document.querySelectorAll("[data-logout]").forEach((button) => button.addEventListener("click", logout));
   document.querySelectorAll("[data-open-notices]").forEach((button) => button.addEventListener("click", () => { toast(ui.role === "admin" ? "Você possui encaminhamentos e atualizações para revisar." : "Estes são os casos encaminhados para seu perfil."); setView(ui.role === "admin" ? "assignments" : "my-cases"); }));
   document.querySelectorAll("[data-open-assignment]").forEach((button) => button.addEventListener("click", () => { ui.activeCaseId = button.dataset.openAssignment; setView("assignments"); }));
   document.querySelectorAll("[data-open-case]").forEach((button) => button.addEventListener("click", () => { ui.activeCaseId = button.dataset.openCase; ui.caseTab = "registro"; setView("case-detail"); }));
@@ -716,10 +656,10 @@ function bindEvents() {
     render();
   }));
   document.querySelectorAll("[data-remove-draft]").forEach((button) => button.addEventListener("click", () => { ui.draftSessions = ui.draftSessions.filter((draft) => draft.id !== button.dataset.removeDraft); render(); }));
-  document.querySelectorAll("[data-remove-unavailability]").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-remove-unavailability]").forEach((button) => button.addEventListener("click", async () => {
     const item = state.unavailability.find((entry) => entry.id === button.dataset.removeUnavailability);
     if (!item || item.professionalId !== ui.professionalId) return;
-    state.unavailability = state.unavailability.filter((entry) => entry !== item); saveState(); render(); toast("Indisponibilidade removida.");
+    if (await commit(() => must(db.from("indisponibilidades").delete().eq("id", item.id)))) toast("Indisponibilidade removida.");
   }));
   document.querySelector("#unavailability-form")?.addEventListener("submit", saveUnavailability);
   document.querySelectorAll('#unavailability-form input[name="mode"]').forEach((input) => input.addEventListener("change", () => document.querySelector("#time-fields").classList.toggle("hidden", document.querySelector('#unavailability-form input[name="mode"]:checked').value !== "time")));
@@ -749,17 +689,7 @@ const accountOf = (professionalId) => state.accounts.find((account) => account.p
 function accessCard() {
   const access = ui.newAccess;
   if (!access) return "";
-  return `<article class="panel content-panel access-card" role="status"><div><h2>Acesso gerado para ${escapeHTML(access.name)}</h2><p class="cell-muted">Entregue estes dados ao profissional. A senha aparece só agora e não poderá ser consultada depois; se for perdida, use “Nova senha”.</p><dl class="access-data"><div><dt>Usuário</dt><dd>${escapeHTML(access.username)}</dd></div><div><dt>Senha</dt><dd>${escapeHTML(access.password)}</dd></div></dl></div><div class="table-actions"><button class="button small" type="button" data-copy-access>Copiar</button><button class="button secondary small" type="button" data-dismiss-access>Fechar</button></div></article>`;
-}
-
-async function createAccess(professional) {
-  const existing = accountOf(professional.id);
-  const username = existing?.username || suggestUsername(professional.name);
-  const password = generatePassword();
-  const hash = await hashPassword(username, password);
-  if (existing) Object.assign(existing, { hash, password });
-  else state.accounts.push({ username, role: "professional", professionalId: professional.id, password, hash });
-  ui.newAccess = { name: professional.name, username, password };
+  return `<article class="panel content-panel access-card" role="status"><div><h2>Acesso gerado para ${escapeHTML(access.name)}</h2><p class="cell-muted">Entregue estes dados ao profissional. Eles também ficam disponíveis ao clicar no nome dele na equipe.</p><dl class="access-data"><div><dt>Usuário</dt><dd>${escapeHTML(access.username)}</dd></div><div><dt>Senha</dt><dd>${escapeHTML(access.password)}</dd></div></dl></div><div class="table-actions"><button class="button small" type="button" data-copy-access>Copiar</button><button class="button secondary small" type="button" data-dismiss-access>Fechar</button></div></article>`;
 }
 
 function copyAccess() {
@@ -781,15 +711,14 @@ async function submitProfessionalEdit(event) {
   if (username && !/^[a-z0-9._-]{3,}$/.test(username)) return toast("O usuário precisa ter 3 ou mais caracteres: letras minúsculas, números, ponto, hífen ou sublinhado.", true);
   if (username && state.accounts.some((item) => item.username === username && item !== account)) return toast("Este usuário já está em uso.", true);
   if (password && password.length < 6) return toast("A senha precisa ter pelo menos 6 caracteres.", true);
-  const keepsHash = Boolean(account) && !password && !account.password && username === account.username;
-  if (username && !password && !keepsHash) return toast("Defina uma senha para este acesso.", true);
-  Object.assign(professional, { name, specialty: data.get("specialty"), code: data.get("code").trim(), focus: data.get("focus").trim() });
-  if (username && !keepsHash) {
-    const hash = await hashPassword(username, password);
-    if (account) Object.assign(account, { username, password, hash });
-    else state.accounts.push({ username, role: "professional", professionalId: professional.id, password, hash });
-  }
-  saveState(); ui.editProfessionalId = null; render(); toast("Dados do profissional atualizados.");
+  const keepsAccess = Boolean(account) && username === account.username && (!password || password === account.password);
+  if (username && !password && !keepsAccess) return toast("Defina uma senha para este acesso.", true);
+  const saved = await commit(async () => {
+    await must(db.from("profissionais").update({ nome: name, especialidade: data.get("specialty"), registro: data.get("code").trim(), atuacao: data.get("focus").trim() }).eq("id", professional.id));
+    if (username && !keepsAccess) await must(db.rpc("salvar_acesso", { p_profissional_id: professional.id, p_usuario: username, p_senha: password }));
+    ui.editProfessionalId = null;
+  });
+  if (saved) toast("Dados do profissional atualizados.");
 }
 
 async function submitProfessional(event) {
@@ -797,42 +726,50 @@ async function submitProfessional(event) {
   if (ui.role !== "admin") return toast("Somente a administração pode cadastrar profissionais.", true);
   const data = new FormData(event.currentTarget);
   const professional = { id: uid("prof"), name: data.get("name").trim(), specialty: data.get("specialty"), code: data.get("code").trim() };
-  state.professionals.push(professional);
-  await createAccess(professional);
-  saveState(); render(); window.scrollTo({ top: 0, behavior: "smooth" });
+  const username = suggestUsername(professional.name), password = generatePassword();
+  const saved = await commit(async () => {
+    await must(db.from("profissionais").insert({ id: professional.id, nome: professional.name, especialidade: professional.specialty, registro: professional.code }));
+    await must(db.rpc("salvar_acesso", { p_profissional_id: professional.id, p_usuario: username, p_senha: password }));
+    ui.newAccess = { name: professional.name, username, password };
+  });
+  if (!saved) return;
+  render(); window.scrollTo({ top: 0, behavior: "smooth" });
   toast("Profissional cadastrado e acesso gerado.");
 }
 
-function deleteProfessional(id) {
+async function deleteProfessional(id) {
   if (ui.role !== "admin") return toast("Somente a administração pode remover profissionais.", true);
   const professional = getProfessional(id);
   if (!professional) return;
   const used = state.patients.some((patient) => patient.assignedIds.includes(id));
   if (used) return toast("Este profissional possui casos encaminhados e não pode ser removido nesta etapa.", true);
-  state.professionals = state.professionals.filter((item) => item.id !== id);
-  state.accounts = state.accounts.filter((account) => account.professionalId !== id);
-  if (ui.professionalId === id) ui.professionalId = state.professionals[0]?.id;
   if (ui.editProfessionalId === id) ui.editProfessionalId = null;
-  saveState(); render(); toast("Profissional removido da equipe.");
+  if (await commit(() => must(db.rpc("remover_profissional", { p_id: id })))) toast("Profissional removido da equipe.");
 }
 
-function submitAnamnese(event) {
+async function submitAnamnese(event) {
   event.preventDefault();
   const form = event.currentTarget;
   const data = new FormData(form);
   const guardians = [...document.querySelectorAll(".guardian-row")].map((row) => ({ relation: row.querySelector('[name="guardian-relation"]').value, name: row.querySelector('[name="guardian-name"]').value.trim(), cpf: row.querySelector('[name="guardian-cpf"]').value.trim(), phone: row.querySelector('[name="guardian-phone"]').value.trim(), email: row.querySelector('[name="guardian-email"]').value.trim() })).filter((guardian) => guardian.name || guardian.cpf || guardian.phone || guardian.email);
   const hasHypothesis = data.get("hypothesis") === "yes";
   const hasDiagnosis = data.get("diagnosis") === "yes";
-  const patient = {
-    id: uid("case"), name: data.get("patientName").trim(), gender: data.get("gender"), birthDate: data.get("birthDate"), cpf: data.get("patientCpf").trim(), guardians,
-    hypothesis: { has: hasHypothesis, narrative: hasHypothesis ? data.get("hypothesisText").trim() : "" },
-    diagnosis: { has: hasDiagnosis, fileName: hasDiagnosis ? (document.querySelector("#diagnosis-file").files?.[0]?.name || "Documento indicado pela família") : "" },
-    familyComplaint: data.get("familyComplaint").trim(), assignedIds: [], status: "Aguardando encaminhamento", createdAt: new Date().toISOString().slice(0, 10),
+  const row = {
+    id: uid("case"), nome: data.get("patientName").trim(), sexo: data.get("gender") || "", nascimento: data.get("birthDate") || null, cpf: data.get("patientCpf").trim(), responsaveis: guardians,
+    hipotese: { has: hasHypothesis, narrative: hasHypothesis ? data.get("hypothesisText").trim() : "" },
+    diagnostico: { has: hasDiagnosis, fileName: hasDiagnosis ? (document.querySelector("#diagnosis-file").files?.[0]?.name || "Documento indicado pela família") : "" },
+    anamnese: data.get("familyComplaint").trim(),
   };
-  state.patients.unshift(patient); ui.activeCaseId = patient.id; saveState(); ui.filterSpecialty = "Todas"; setView("assignments"); toast("Ficha de anamnese salva. Agora selecione os profissionais.");
+  const saved = await commit(async () => {
+    await must(db.from("pacientes").insert(row));
+    Object.assign(ui, { activeCaseId: row.id, filterSpecialty: "Todas", view: "assignments", newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null });
+  });
+  if (!saved) return;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  toast("Ficha de anamnese salva. Agora selecione os profissionais.");
 }
 
-function saveAssignment() {
+async function saveAssignment() {
   const patient = getPatient();
   if (!patient) return;
   const selected = ui.draftAssigned || patient.assignedIds;
@@ -840,14 +777,14 @@ function saveAssignment() {
   const pending = ui.draftSessions;
   ui.draftSessions = [];
   const conflict = pending.map((draft) => ({ draft, problem: conflictMessage(draft.professionalId, draft.date, draft.time) })).find((item) => item.problem);
-  if (conflict) { ui.draftSessions = pending; return toast(`${getProfessional(conflict.draft.professionalId)?.name}: ${conflict.problem}`, true); }
-  pending.forEach((draft) => {
-    state.sessions[patient.id] ||= {}; state.sessions[patient.id][draft.professionalId] ||= [];
-    state.sessions[patient.id][draft.professionalId].push({ id: uid("session"), date: draft.date, time: draft.time, objective: "Atendimento agendado pela administração", status: "Agendada" });
-    state.sessions[patient.id][draft.professionalId].sort((x, y) => `${x.date} ${x.time || ""}`.localeCompare(`${y.date} ${y.time || ""}`));
+  ui.draftSessions = pending;
+  if (conflict) return toast(`${getProfessional(conflict.draft.professionalId)?.name}: ${conflict.problem}`, true);
+  const saved = await commit(async () => {
+    if (pending.length) await must(db.from("sessoes").insert(pending.map((draft) => ({ id: uid("session"), paciente_id: patient.id, profissional_id: draft.professionalId, data: draft.date, horario: draft.time, objetivo: "Atendimento agendado pela administração", status: "Agendada" }))));
+    await must(db.from("pacientes").update({ profissionais_ids: selected, status: "Em acompanhamento" }).eq("id", patient.id));
+    ui.draftSessions = []; ui.draftAssigned = null;
   });
-  patient.assignedIds = selected; patient.status = "Em acompanhamento"; ui.draftAssigned = null;
-  saveState(); render(); toast(pending.length ? `Encaminhamento salvo e ${pending.length} atendimento${pending.length === 1 ? "" : "s"} agendado${pending.length === 1 ? "" : "s"}.` : "Encaminhamento salvo. Os profissionais selecionados foram notificados.");
+  if (saved) toast(pending.length ? `Encaminhamento salvo e ${pending.length} atendimento${pending.length === 1 ? "" : "s"} agendado${pending.length === 1 ? "" : "s"}.` : "Encaminhamento salvo. Os profissionais selecionados foram notificados.");
 }
 
 async function saveUnavailability(event) {
@@ -859,40 +796,38 @@ async function saveUnavailability(event) {
   const start = String(data.get("start") || ""), end = String(data.get("end") || "");
   if (!allDay && (!start || !end || timeToMin(start) >= timeToMin(end))) return toast("Informe um horário inicial anterior ao horário final.", true);
   const weeks = Math.max(1, Number(data.get("weeks")) || 1), note = data.get("note").trim();
-  let added = 0, warned = false;
+  const rows = [];
+  let warned = false;
   for (let i = 0; i < weeks; i++) {
     const day = addDays(date, i * 7);
     const duplicate = state.unavailability.some((item) => item.professionalId === professional.id && item.date === day && item.allDay === allDay && item.start === (allDay ? "" : start) && item.end === (allDay ? "" : end));
     if (duplicate) continue;
-    state.unavailability.push({ id: uid("una"), professionalId: professional.id, date: day, allDay, start: allDay ? "" : start, end: allDay ? "" : end, note });
-    added++;
+    rows.push({ id: uid("una"), profissional_id: professional.id, data: day, dia_todo: allDay, inicio: allDay ? "" : start, fim: allDay ? "" : end, motivo: note });
     if (professionalSessions(professional.id).some(({ session }) => session.date === day && session.status === "Agendada" && session.time && (allDay || (timeToMin(session.time) < timeToMin(end) && timeToMin(start) < timeToMin(session.time) + SESSION_MINUTES)))) warned = true;
   }
-  saveState(); render();
-  toast(warned ? "Indisponibilidade salva, mas há atendimento já agendado nesse período. Avise a administração." : added ? `Indisponibilidade marcada em ${added} dia${added === 1 ? "" : "s"}.` : "Esse período já estava marcado.", warned);
+  if (!rows.length) return toast("Esse período já estava marcado.");
+  if (!(await commit(() => must(db.from("indisponibilidades").insert(rows))))) return;
+  toast(warned ? "Indisponibilidade salva, mas há atendimento já agendado nesse período. Avise a administração." : `Indisponibilidade marcada em ${rows.length} dia${rows.length === 1 ? "" : "s"}.`, warned);
 }
 
-function saveProfessionalRecord(event) {
+async function saveProfessionalRecord(event) {
   event.preventDefault();
   const patient = getPatient();
   const professional = getProfessional(ui.professionalId);
   if (!patient || !professional) return;
   const data = new FormData(event.currentTarget);
-  state.reports[patient.id] ||= {};
-  state.reports[patient.id][professional.id] = { complaint: data.get("complaint").trim(), plan: data.get("plan").trim(), result: data.get("result").trim(), updatedAt: new Date().toISOString().slice(0, 10) };
-  saveState(); render(); toast("Evolução profissional salva no relatório integrado.");
+  const row = { paciente_id: patient.id, profissional_id: professional.id, queixa: data.get("complaint").trim(), plano: data.get("plan").trim(), resultado: data.get("result").trim(), atualizado_em: todayKey() };
+  if (await commit(() => must(db.from("evolucoes").upsert(row, { onConflict: "paciente_id,profissional_id" })))) toast("Evolução profissional salva no relatório integrado.");
 }
 
-function saveSession(event) {
+async function saveSession(event) {
   event.preventDefault();
   const patient = getPatient(); const professional = getProfessional(ui.professionalId); if (!patient || !professional) return;
   const data = new FormData(event.currentTarget);
   const problem = data.get("status") === "Agendada" ? conflictMessage(professional.id, data.get("date"), data.get("time")) : "";
   if (problem) return toast(problem, true);
-  state.sessions[patient.id] ||= {}; state.sessions[patient.id][professional.id] ||= [];
-  state.sessions[patient.id][professional.id].push({ id: uid("session"), date: data.get("date"), time: data.get("time"), objective: data.get("objective").trim(), status: data.get("status") });
-  state.sessions[patient.id][professional.id].sort((a, b) => `${a.date} ${a.time || ""}`.localeCompare(`${b.date} ${b.time || ""}`));
-  saveState(); render(); toast("Sessão adicionada à agenda.");
+  const row = { id: uid("session"), paciente_id: patient.id, profissional_id: professional.id, data: data.get("date"), horario: data.get("time") || "", objetivo: data.get("objective").trim(), status: data.get("status") };
+  if (await commit(() => must(db.from("sessoes").insert(row)))) toast("Sessão adicionada à agenda.");
 }
 
 function printReport() {
@@ -906,4 +841,4 @@ function printReport() {
   root.remove();
 }
 
-render();
+startSession();
