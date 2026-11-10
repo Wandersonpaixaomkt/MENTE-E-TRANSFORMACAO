@@ -1,0 +1,11 @@
+# Arquivos do painel sempre revalidados: evita o navegador ficar com versão antiga do app.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|css|html)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>
+<IfModule mod_expires.c>
+  <FilesMatch "\.(js|css|html)$">
+    ExpiresActive Off
+  </FilesMatch>
+</IfModule>
