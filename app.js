@@ -329,7 +329,7 @@ function pageLabel() {
 }
 
 function notificationCount() {
-  if (ui.role === "admin") return state.patients.filter((patient) => patient.status === "Aguardando encaminhamento").length + 2;
+  if (ui.role === "admin") return state.patients.filter((patient) => patient.status === "Aguardando encaminhamento").length;
   return state.patients.filter((patient) => patient.assignedIds.includes(ui.professionalId)).length;
 }
 
@@ -357,12 +357,16 @@ function adminDashboard() {
     </section>
     <section class="dashboard-grid">
       <article class="panel"><div class="panel-header"><h2>Casos recentes</h2><button class="text-action" type="button" data-nav="assignments">Ver todos</button></div><div class="case-list">${state.patients.slice(0, 5).map(caseRow).join("") || emptyInline("Nenhuma anamnese cadastrada.")}</div></article>
-      <article class="panel"><div class="panel-header"><h2>Atividade recente</h2></div><div class="timeline">
-        <div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>Anamnese de Miguel atualizada</strong><span>Hoje · Cadastro validado e encaminhado</span></div></div>
-        <div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>Nova sessão registrada</strong><span>Ontem · Psicologia</span></div></div>
-        <div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>Relatório integrado disponível</strong><span>25 out · Caso Luíza Nascimento</span></div></div>
-      </div></article>
+      <article class="panel"><div class="panel-header"><h2>Atividade recente</h2></div><div class="timeline">${recentActivity().map((item) => `<div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.detail)}</span></div></div>`).join("") || emptyInline("Nenhuma atividade registrada ainda.")}</div></article>
     </section>`;
+}
+
+function recentActivity() {
+  const items = [
+    ...state.patients.map((patient) => ({ date: patient.createdAt, title: `Anamnese de ${patient.name} cadastrada`, detail: patient.status })),
+    ...state.patients.flatMap((patient) => Object.entries(patientReports(patient.id)).map(([professionalId, report]) => ({ date: report.updatedAt, title: `Evolução registrada · ${patient.name}`, detail: getProfessional(professionalId)?.specialty || "Profissional" }))),
+  ];
+  return items.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4).map((item) => ({ ...item, detail: `${dateLabel(item.date)} · ${item.detail}` }));
 }
 
 function agendaView() {
