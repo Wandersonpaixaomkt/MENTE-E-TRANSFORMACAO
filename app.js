@@ -523,7 +523,7 @@ function guardianFields(guardian = {}) {
 
 function anamneseView() {
   return `
-    ${sectionHeading("Nova ficha de anamnese", "Colete as informações iniciais do paciente e da família para começar a investigação.")}
+    ${sectionHeading("Nova ficha de anamnese", "")}
     <div class="split-layout">
       <form class="panel form-card" id="anamnese-form">
         <h2>Dados de entrada</h2>
@@ -540,7 +540,7 @@ function anamneseView() {
 
 function processAside(current) {
   const steps = ["Ficha de anamnese", "Selecionar profissionais", "Acompanhamento clínico", "Relatório integrado"];
-  return `<aside class="panel side-note"><h2>Jornada do caso</h2><p>O caso segue para os profissionais somente após a ficha inicial ser salva.</p><div class="step-list">${steps.map((step, index) => `<div class="step ${index + 1 === current ? "active" : ""}"><span class="step-number">${index + 1}</span>${step}</div>`).join("")}</div><hr /><small>As informações desta ficha serão exibidas aos profissionais encaminhados, junto com os documentos anexados.</small></aside>`;
+  return `<aside class="panel side-note"><h2>Jornada do caso</h2><div class="step-list">${steps.map((step, index) => `<div class="step ${index + 1 === current ? "active" : ""}"><span class="step-number">${index + 1}</span>${step}</div>`).join("")}</div></aside>`;
 }
 
 function assignmentsView() {
