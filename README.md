@@ -13,8 +13,10 @@ Protótipo navegável do web app proposto à clínica. HTML, CSS e JavaScript pu
 | Mapa visual automático + relatório para os pais | Aba **Mapa visual** (radar + linha do tempo) e botão **Relatório para os pais** (imprimir / salvar PDF) |
 | Permissões e auditoria | **Equipe e permissões** (matriz com 5 permissões) e **Auditoria** (só admin) |
 | Alertas de prazo | Sino no topo e página **Prazos** (aviso 15 dias antes da reavaliação) |
+| Acesso dos profissionais | **Equipe e permissões** → clicar num profissional para ver e editar dados, usuário e senha; **Adicionar profissional** gera usuário e senha automaticamente (só admin) |
+| Agenda e indisponibilidade | **Agenda**: cada profissional marca dias e horários em que não pode atender; a ficha do paciente → aba **Atendimentos** agenda horários e bloqueia os indisponíveis (só admin agenda) |
 
-**Login:** por enquanto existe um único usuário, `@dravania` (Vânia, administradora). A senha não fica no código, só o hash (SHA-256), e após 5 tentativas erradas o login trava por 30 s. Os outros profissionais aparecem na equipe, mas ainda não têm acesso próprio. Para cadastrar outro usuário, adicione uma linha em `USERS` no `js/data.js` com o hash de `mt-portal:<usuario>:<senha>`.
+**Login:** a administradora entra com `dravania` / `12345678` (senha provisória: troque antes de usar dados reais). Os outros profissionais entram com o usuário e a senha gerados pela administradora em **Equipe e permissões**. A senha da administradora fica no código só como hash (SHA-256); as dos profissionais ficam salvas no navegador para que a administradora possa consultá-las. Após 5 tentativas erradas o login trava por 30 s.
 
 ## Celular
 
@@ -22,7 +24,8 @@ Layout responsivo (testado em 375 px e 768 px): barra de navegação fixa no top
 
 ## Observações importantes
 
-- **Todos os pacientes são fictícios.** A equipe é a mapeada da clínica (Vânia, Audrey, Moniele, Néssia, Laiane, Gabrielly).
+- **Todos os pacientes são fictícios.** A equipe é a mapeada da clínica (Vânia, Audrey, Moniele, Néssia, Laiane, Gabrielly) mais Lorrayne, Eduardo, a psicóloga psicanalista (nome a informar) e o Dr. Costa (registro a informar).
+- Atendimentos duram 60 minutos, com horários das 08:00 às 17:00 (`SLOTS` e `DURACAO_MIN` em `js/data.js`).
 - Os dados ficam salvos só no navegador (`localStorage`). Em **Equipe e permissões → Restaurar dados originais** a demo volta ao início.
 - Login e permissões funcionam só na tela: sem servidor, quem tiver acesso aos arquivos consegue contornar. Isso não protege dados reais. Para produção são necessários: autenticação real, banco de dados em servidor, regras validadas no back-end, backup e adequação à LGPD (dados de saúde de crianças são sensíveis).
 

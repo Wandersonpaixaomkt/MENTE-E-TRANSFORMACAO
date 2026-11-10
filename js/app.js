@@ -37,7 +37,7 @@ const ICONS = {
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 
 /* ---------- estado e sessão ---------- */
-const ui = { q: '', area: '', tab: 'resumo', gArea: '', gStatus: '', auditUser: '' };
+const ui = { q: '', area: '', tab: 'resumo', gArea: '', gStatus: '', auditUser: '', agMonth: '', agDay: '', agProf: '', schMonth: '', schDay: '', schProf: '' };
 const S = () => Store.state;
 const getSession = () => { try { return sessionStorage.getItem('mt-user'); } catch (e) { return window.__mtUser || null; } };
 const setSession = id => { try { id ? sessionStorage.setItem('mt-user', id) : sessionStorage.removeItem('mt-user'); } catch (e) { window.__mtUser = id; } };
@@ -53,6 +53,53 @@ const visiblePatients = u => S().patients.filter(p => canSeePatient(u, p));
 const canSeeGoal = (u, g) => u.perms.admin || u.perms.verOutras || g.area === u.area;
 const visibleGoals = (u, pid) => S().goals.filter(g => (!pid || g.pacienteId === pid) && canSeePatient(u, patient(g.pacienteId)) && canSeeGoal(u, g));
 const canEditGoal = (u, g) => u.perms.admin || (u.perms.editar && g.area === u.area);
+
+/* ---------- contas de acesso ---------- */
+const contaOf = pid => S().contas.find(c => c.profId === pid);
+function suggestUser(nome) {
+  const w = nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[^a-z\s]/g, ' ').split(/\s+/).filter(x => x && !['dr', 'dra'].includes(x));
+  const base = w.length > 1 ? `${w[0]}.${w[w.length - 1]}` : (w[0] || 'profissional');
+  let u = base, n = 2;
+  while (S().contas.some(c => c.usuario === u)) u = base + n++;
+  return u;
+}
+function genPassword(len = 10) {
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  return Array.from(crypto.getRandomValues(new Uint32Array(len)), n => abc[n % abc.length]).join('');
+}
+async function setAccess(pid, usuario, senha) {
+  const hash = await sha256(`mt-portal:${usuario}:${senha}`), c = contaOf(pid);
+  if (c) Object.assign(c, { usuario, senha, hash }); else S().contas.push({ usuario, profId: pid, senha, hash });
+}
+
+/* ---------- agenda ---------- */
+const toMin = h => { const [x, y] = h.split(':').map(Number); return x * 60 + y; };
+const todayISO = () => isoOf(todayDate());
+const fmtLong = iso => parseISO(iso).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' });
+const monthTitle = m => parseISO(m + '-01').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+const shiftMonth = (m, n) => { const d = parseISO(m + '-01'); d.setDate(1); d.setMonth(d.getMonth() + n); return isoOf(d).slice(0, 7); };
+const indispDe = (pid, d) => S().indisp.filter(x => x.profId === pid && x.data === d);
+const atendDe = (pid, d) => S().atend.filter(x => x.profId === pid && x.data === d && x.status === 'Agendado');
+function slotKind(pid, d, h) {
+  const a = toMin(h), b = a + DURACAO_MIN;
+  if (indispDe(pid, d).some(x => x.diaTodo || (a < toMin(x.fim) && toMin(x.inicio) < b))) return 'off';
+  if (atendDe(pid, d).some(x => a < toMin(x.hora) + DURACAO_MIN && toMin(x.hora) < b)) return 'busy';
+  return 'free';
+}
+const freeSlots = (pid, d) => (d < todayISO() ? [] : SLOTS.filter(h => slotKind(pid, d, h) === 'free'));
+function conflito(pid, d, h) {
+  if (!d || !h) return 'Escolha o dia e o horário.';
+  if (d < todayISO()) return 'Escolha uma data a partir de hoje.';
+  const k = slotKind(pid, d, h);
+  return k === 'off' ? 'O profissional marcou indisponibilidade nesse dia e horário.' : k === 'busy' ? 'O profissional já tem atendimento nesse horário.' : '';
+}
+function calendar(scope, month, cell, compact = false) {
+  const first = parseISO(month + '-01'), days = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const cells = Array(first.getDay()).fill('<span></span>');
+  for (let d = 1; d <= days; d++) cells.push(cell(`${month}-${pad(d)}`, d));
+  return `<div class="cal${compact ? ' compact' : ''}"><div class="cal-h"><button type="button" class="icon-btn" data-act="cal-nav" data-scope="${scope}" data-n="-1" aria-label="Mês anterior">${icon('back')}</button><b>${monthTitle(month)}</b><button type="button" class="icon-btn" data-act="cal-nav" data-scope="${scope}" data-n="1" aria-label="Próximo mês">${icon('arrow')}</button></div>
+    <div class="cal-g">${['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(x => `<span class="cal-w">${x}</span>`).join('')}${cells.join('')}</div></div>`;
+}
 
 function log(acao, texto, detalhe = '') {
   S().audit.unshift({ ts: Date.now(), por: getSession(), acao, texto, detalhe });
@@ -110,6 +157,7 @@ const NAV = [
   { r: 'painel', ico: 'home', label: 'Painel' },
   { r: 'pacientes', ico: 'users', label: 'Pacientes' },
   { r: 'prazos', ico: 'calendar', label: 'Prazos' },
+  { r: 'agenda', ico: 'clock', label: 'Agenda' },
   { r: 'equipe', ico: 'shield', label: 'Equipe e permissões', admin: true },
   { r: 'auditoria', ico: 'file', label: 'Auditoria', admin: true },
   { r: 'proposta', ico: 'info', label: 'Sobre o portal' },
@@ -189,7 +237,7 @@ async function doLogin(form) {
   if (!usuario || !senha) return fail('Informe usuário e senha.');
   btn.disabled = true;
   const hash = await sha256(`mt-portal:${usuario}:${senha}`);
-  const acc = USERS.find(x => x.usuario === usuario && x.hash === hash);
+  const acc = S().contas.find(x => x.usuario === usuario && x.hash === hash && prof(x.profId));
   btn.disabled = false;
   if (!acc) { registerFailure(); const w = lockedFor(); return fail(w > 0 ? `Muitas tentativas. Tente de novo em ${w}s.` : 'Usuário ou senha incorretos.'); }
   clearFailures();
@@ -263,8 +311,8 @@ function viewPaciente(u, id, tab) {
   const p = patient(id);
   if (!p || !canSeePatient(u, p)) return `<div class="page-head"><h1>Paciente não encontrado</h1></div>${empty('Sem acesso', 'Este paciente não existe ou você não tem permissão para vê-lo.')}<a class="btn ghost" href="#/pacientes">${icon('back')}Voltar</a>`;
   const gs = visibleGoals(u, id), hidden = S().goals.filter(g => g.pacienteId === id).length - gs.length;
-  const tabs = [['resumo', 'Resumo'], ['metas', 'Metas'], ['mapa', 'Mapa visual'], ['historico', 'Histórico']];
-  const body = { resumo: tabResumo, metas: tabMetas, mapa: tabMapa, historico: tabHistorico }[tab] || tabResumo;
+  const tabs = [['resumo', 'Resumo'], ['metas', 'Metas'], ['mapa', 'Mapa visual'], ['historico', 'Histórico'], ['agenda', 'Atendimentos']];
+  const body = { resumo: tabResumo, metas: tabMetas, mapa: tabMapa, historico: tabHistorico, agenda: tabAgenda }[tab] || tabResumo;
   return `<a class="crumb" href="#/pacientes">${icon('back')}Pacientes</a>
     <div class="p-head">
       ${avatar(p.nome, 'xl')}
@@ -336,6 +384,30 @@ function tabHistorico(u, p, gs) {
       <span>${AREAS[e.g.area].label} · ${esc(prof(e.por)?.nome || '')}</span><small>${fmt(e.data)} · ${e.status} · ${e.progresso}%</small></div></li>`).join('')}</ol></section>`;
 }
 
+function tabAgenda(u, p) {
+  const list = S().atend.filter(x => x.pacienteId === p.id && x.status === 'Agendado').sort((x, y) => (x.data + x.hora).localeCompare(y.data + y.hora));
+  const next = list.filter(x => x.data >= todayISO()), past = list.filter(x => x.data < todayISO());
+  const row = x => `<li><div class="row-s"><span class="when"><b>${fmtShort(x.data)}</b>${x.hora}</span><div class="grow"><b>${esc(prof(x.profId)?.nome || '')}</b><span>${esc(AREAS[prof(x.profId)?.area]?.label || '')} · ${fmtLong(x.data)}</span></div>${isAdmin(u) && x.data >= todayISO() ? `<button class="btn ghost sm" data-act="cancel-atend" data-id="${x.id}">Cancelar</button>` : ''}</div></li>`;
+  const listCard = `<section class="card"><div class="card-h"><h2>Próximos atendimentos</h2><span class="muted sm">${next.length}</span></div>${next.length ? `<ul class="rows">${next.map(row).join('')}</ul>` : empty('Nenhum atendimento agendado', isAdmin(u) ? 'Escolha o profissional e o horário ao lado.' : 'A administração agenda os atendimentos.')}${past.length ? `<details class="hist"><summary>Anteriores (${past.length})</summary><ul class="rows">${past.map(row).join('')}</ul></details>` : ''}</section>`;
+  if (!isAdmin(u)) return listCard;
+  const team = S().profs.filter(x => p.equipe.includes(x.id)), others = S().profs.filter(x => !p.equipe.includes(x.id));
+  if (!ui.schProf || !prof(ui.schProf)) ui.schProf = (team[0] || S().profs[0]).id;
+  if (!ui.schMonth) ui.schMonth = todayISO().slice(0, 7);
+  const pid = ui.schProf, d = ui.schDay;
+  const opt = x => `<option value="${x.id}" ${x.id === pid ? 'selected' : ''}>${esc(x.nome)} · ${esc(AREAS[x.area].label)}</option>`;
+  const cal = calendar('sch', ui.schMonth, (k, n) => {
+    const past = k < todayISO(), free = freeSlots(pid, k).length, blocked = !past && !free, mine = S().atend.some(x => x.pacienteId === p.id && x.profId === pid && x.data === k && x.status === 'Agendado');
+    return `<button type="button" class="cal-d${k === todayISO() ? ' today' : ''}${k === d ? ' sel' : ''}${past ? ' past' : ''}${blocked ? ' blocked' : ''}${mine ? ' has-at' : ''}" data-act="cal-day" data-scope="sch" data-d="${k}" ${past || blocked ? 'disabled' : ''} ${blocked ? 'title="Sem horários livres: indisponível ou agenda cheia"' : ''}><b>${n}</b>${mine ? '<i>✓</i>' : ''}</button>`;
+  }, true);
+  const slots = d ? `<p class="slot-day">${fmtLong(d)}</p><div class="slots">${SLOTS.map(h => { const k = slotKind(pid, d, h); return k === 'free' ? `<button type="button" class="slot" data-act="slot" data-p="${p.id}" data-prof="${pid}" data-d="${d}" data-h="${h}">${h}</button>` : `<span class="slot busy" title="${k === 'off' ? 'Profissional indisponível' : 'Horário ocupado'}">${h}<small>${k === 'off' ? 'indisponível' : 'ocupado'}</small></span>`; }).join('')}</div>` : `<p class="muted sm">Clique em um dia livre para ver os horários. Dias riscados não têm horário disponível.</p>`;
+  return `<div class="grid-2 wide-l">
+    <section class="card"><div class="card-h"><h2>Agendar atendimento</h2></div>
+      <label class="f-inline">Profissional<select class="select" data-change="sch-prof">${team.length ? `<optgroup label="Equipe do paciente">${team.map(opt).join('')}</optgroup>` : ''}<optgroup label="${team.length ? 'Outros profissionais' : 'Profissionais'}">${others.map(opt).join('')}</optgroup></select></label>
+      <div class="sched">${cal}<div>${slots}</div></div>
+      <p class="muted sm pad">Dias e horários marcados como indisponíveis pelo profissional ficam bloqueados. Cada atendimento dura ${DURACAO_MIN} minutos.</p></section>
+    ${listCard}</div>`;
+}
+
 /* ---------- relatório para os pais (impressão) ---------- */
 function viewRelatorio(u, id) {
   const p = patient(id);
@@ -367,6 +439,45 @@ function viewPrazos(u) {
       ${l.length ? `<ul class="rows">${l.map(g => `<li><a href="#/paciente/${g.pacienteId}/metas">${avatar(patient(g.pacienteId).nome)}<div class="grow"><b>${esc(patient(g.pacienteId).nome)}</b><span>${esc(truncate(g.titulo, 80))}</span></div><div class="right">${dueBadge(g)}<small>${fmt(g.prazo)} · ${esc(AREAS[g.area].label)}</small></div></a></li>`).join('')}</ul>` : `<p class="muted pad">Nada por aqui.</p>`}</section>`; }).join('')}`;
 }
 
+/* ---------- agenda ---------- */
+function viewAgenda(u) {
+  const admin = isAdmin(u);
+  if (!ui.agProf || !prof(ui.agProf) || !admin) ui.agProf = admin ? (ui.agProf && prof(ui.agProf) ? ui.agProf : S().profs[0].id) : u.id;
+  if (!ui.agMonth) ui.agMonth = todayISO().slice(0, 7);
+  const pid = ui.agProf, d = ui.agDay, own = pid === u.id;
+  const cal = calendar('ag', ui.agMonth, (k, n) => {
+    const bl = indispDe(pid, k), at = atendDe(pid, k), all = bl.some(x => x.diaTodo), part = bl.length && !all;
+    const tag = all ? 'Indisponível' : part ? 'Parcial' : at.length ? plural(at.length, 'atend.', 'atend.') : '';
+    return `<button type="button" class="cal-d${k === todayISO() ? ' today' : ''}${k === d ? ' sel' : ''}${k < todayISO() ? ' past' : ''}${all ? ' off' : ''}${part ? ' part' : ''}${at.length ? ' has-at' : ''}" data-act="cal-day" data-scope="ag" data-d="${k}"><b>${n}</b>${tag ? `<i>${tag}</i>` : ''}</button>`;
+  });
+  return `<div class="page-head"><div><h1>${admin ? 'Agenda da equipe' : 'Minha agenda'}</h1><p class="muted">${admin ? 'Veja os dias e horários em que cada profissional não pode atender. Os atendimentos são agendados na ficha do paciente, na aba Atendimentos.' : 'Marque os dias e horários em que você NÃO poderá atender. A administração só agenda atendimentos nos horários livres.'}</p></div>
+    ${admin ? `<select class="select" data-change="ag-prof" aria-label="Profissional">${S().profs.map(x => `<option value="${x.id}" ${x.id === pid ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}</select>` : ''}</div>
+    <div class="grid-2 wide-l">
+      <section class="card">${cal}<div class="cal-legend"><span><i class="lg off"></i>Indisponível o dia todo</span><span><i class="lg part"></i>Indisponível em parte do dia</span><span><i class="lg at"></i>Atendimento agendado</span></div></section>
+      <section class="card">${dayPanel(u, pid, d, own)}</section>
+    </div>`;
+}
+function dayPanel(u, pid, d, own) {
+  if (!d) return empty('Selecione um dia', own ? 'Clique em um dia do calendário para marcar sua indisponibilidade ou ver os atendimentos.' : 'Clique em um dia para ver os detalhes.');
+  const past = d < todayISO();
+  const bl = indispDe(pid, d).sort((x, y) => (x.diaTodo ? '' : x.inicio).localeCompare(y.diaTodo ? '' : y.inicio));
+  const at = atendDe(pid, d).sort((x, y) => x.hora.localeCompare(y.hora));
+  return `<div class="card-h"><h2 class="cap1">${fmtLong(d)}</h2></div>
+    <ul class="day-list">
+      ${bl.map(x => `<li class="off"><div class="grow"><b>${x.diaTodo ? 'Indisponível o dia todo' : `Indisponível ${x.inicio}–${x.fim}`}</b>${x.motivo ? `<span>${esc(x.motivo)}</span>` : ''}</div>${own && !past ? `<button class="btn ghost sm" data-act="del-indisp" data-id="${x.id}">Remover</button>` : ''}</li>`).join('')}
+      ${at.map(x => `<li class="at"><div class="grow"><b>${x.hora} · ${esc(patient(x.pacienteId)?.nome || '')}</b><span>Atendimento agendado</span></div></li>`).join('')}
+      ${bl.length || at.length ? '' : '<li class="none">Nada marcado neste dia.</li>'}
+    </ul>
+    ${!own ? '' : past ? '<p class="muted sm">Este dia já passou.</p>' : `<form data-form="indisp" class="indisp-form"><h3>Marcar indisponibilidade</h3>
+      <div class="radios"><label><input type="radio" name="modo" value="dia" checked data-change="indisp-mode"> Dia todo</label><label><input type="radio" name="modo" value="hora" data-change="indisp-mode"> Somente um horário</label></div>
+      <div class="f-grid">
+        <label class="hora-f" hidden>Das<input type="time" name="inicio" value="08:00"></label><label class="hora-f" hidden>Até<input type="time" name="fim" value="12:00"></label>
+        <label class="full">Motivo (opcional)<input name="motivo" maxlength="60" placeholder="Ex.: curso, consulta, folga"></label>
+        <label>Repetir toda semana por<select name="semanas">${[1, 2, 4, 8, 12, 26].map(n => `<option value="${n}">${n === 1 ? 'Só neste dia' : n + ' semanas'}</option>`).join('')}</select></label>
+      </div>
+      <div class="m-foot"><button class="btn" type="submit">Marcar indisponível</button></div></form>`}`;
+}
+
 /* ---------- equipe e permissões ---------- */
 const PERM_COLS = [['verTodos', 'Ver todos os pacientes'], ['verOutras', 'Ver metas de outras áreas'], ['editar', 'Editar a própria área'], ['exportar', 'Exportar relatórios'], ['admin', 'Administrador']];
 function viewEquipe(u) {
@@ -375,7 +486,8 @@ function viewEquipe(u) {
   return `<div class="page-head"><div><h1>Equipe e permissões</h1><p class="muted">Defina o que cada profissional pode ver e editar. Cada alteração fica registrada na auditoria.</p></div>
       <button class="btn" data-act="new-prof" ${n >= MAX_PROFISSIONAIS ? 'disabled' : ''}>${icon('plus')}Adicionar profissional</button></div>
     <section class="card"><div class="cap"><b>${n} de ${MAX_PROFISSIONAIS} profissionais</b>${bar((n / MAX_PROFISSIONAIS) * 100)}</div>
-      <div class="team-grid">${S().profs.map(p => `<div class="t-card">${avatar(p.nome, 'lg')}<div><b>${esc(p.nome)}</b><span>${esc(p.role)}</span><small>${p.registro ? esc(p.registro) + ' · ' : ''}${plural(S().patients.filter(x => x.equipe.includes(p.id)).length, 'paciente', 'pacientes')}</small></div>${areaChip(p.area)}</div>`).join('')}</div></section>
+      <p class="muted sm pad">Clique em um profissional para ver e editar os dados e o acesso (usuário e senha).</p>
+      <div class="team-grid">${S().profs.map(p => `<button type="button" class="t-card" data-act="open-prof" data-id="${p.id}">${avatar(p.nome, 'lg')}<div><b>${esc(p.nome)}</b><span>${esc(p.role)}</span><small>${p.registro ? esc(p.registro) + ' · ' : ''}${plural(S().patients.filter(x => x.equipe.includes(p.id)).length, 'paciente', 'pacientes')}</small><small class="acc">${contaOf(p.id) ? `Usuário: ${esc(contaOf(p.id).usuario)}` : 'Sem acesso'}</small></div>${areaChip(p.area)}</button>`).join('')}</div></section>
     <section class="card"><div class="card-h"><h2>Matriz de permissões</h2></div>
       <div class="table-wrap"><table class="tbl perm"><thead><tr><th>Profissional</th>${PERM_COLS.map(c => `<th>${c[1]}</th>`).join('')}</tr></thead><tbody>
       ${S().profs.map(p => `<tr><td><b>${esc(p.nome)}</b><small>${esc(AREAS[p.area].label)}</small></td>${PERM_COLS.map(([k, l]) => {
@@ -506,8 +618,48 @@ function newProfModal() {
     <label>Área<select name="area">${Object.keys(AREAS).map(a => `<option value="${a}">${AREAS[a].label}</option>`).join('')}</select></label>
     <label>Registro (CRP, CRN…)<input name="registro" maxlength="30"></label>
     <label class="full">Função<input name="role" maxlength="60" placeholder="Ex.: Psicóloga clínica"></label></div>
-    <p class="muted sm">Fica cadastrado com acesso básico (só pacientes da própria equipe e só a própria área), mas ainda sem login próprio: por enquanto só a Dra. Vânia entra no portal.</p>
+    <p class="muted sm">Ao salvar, o portal gera automaticamente um usuário e uma senha para o profissional entrar. Ele começa com acesso básico (só pacientes da própria equipe e só a própria área).</p>
     <div class="m-foot"><button type="button" class="btn ghost" data-act="close-modal">Cancelar</button><button class="btn" type="submit">Adicionar</button></div></form>`;
+}
+
+function profModal(id) {
+  const p = prof(id), c = contaOf(id);
+  const hint = c ? (c.senha ? '' : 'A senha atual não pode ser exibida. Deixe em branco para manter ou defina uma nova.') : 'Preencha usuário e senha para liberar o acesso deste profissional.';
+  return `<form data-form="prof-edit" data-id="${id}"><div class="m-head"><div><p class="eyebrow">${esc(AREAS[p.area].label)}</p><h2>${esc(p.nome)}</h2></div><button type="button" class="icon-btn" data-act="close-modal" aria-label="Fechar">${icon('x')}</button></div>
+    <div class="f-grid"><label class="full">Nome completo<input name="nome" required maxlength="60" value="${esc(p.nome)}"></label>
+    <label>Área<select name="area">${Object.keys(AREAS).map(a => `<option value="${a}" ${a === p.area ? 'selected' : ''}>${AREAS[a].label}</option>`).join('')}</select></label>
+    <label>Registro (CRP, CRN…)<input name="registro" maxlength="30" value="${esc(p.registro)}"></label>
+    <label class="full">Função<input name="role" maxlength="80" value="${esc(p.role)}"></label>
+    <label class="full">Áreas de atuação<textarea name="atuacao" rows="3" maxlength="400" placeholder="Opcional">${esc(p.atuacao || '')}</textarea></label></div>
+    <h3 class="m-sub">${icon('lock')}Acesso ao portal</h3>
+    <div class="f-grid"><label>Usuário<input name="usuario" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="40" value="${esc(c?.usuario || '')}" placeholder="nome.sobrenome"></label>
+    <label>Senha<span class="pw"><input name="senha" type="password" autocomplete="off" maxlength="40" value="${esc(c?.senha || '')}" placeholder="${c ? 'Nova senha' : 'Senha de acesso'}"><button type="button" class="pw-toggle" data-act="show-pw" aria-label="Mostrar senha">${icon('eye')}</button></span></label></div>
+    ${hint ? `<p class="muted sm">${hint}</p>` : ''}
+    <div class="acc-tools"><button type="button" class="btn ghost sm" data-act="gen-pw">Gerar nova senha</button><button type="button" class="btn ghost sm" data-act="copy-access">Copiar acesso</button></div>
+    <div class="m-foot"><button type="button" class="btn ghost" data-act="close-modal">Cancelar</button><button class="btn" type="submit">Salvar alterações</button></div></form>`;
+}
+function accessModal(nome, usuario, senha) {
+  return `<div class="m-head"><div><p class="eyebrow">Acesso gerado</p><h2>${esc(nome)}</h2></div><button type="button" class="icon-btn" data-act="close-modal" aria-label="Fechar">${icon('x')}</button></div>
+    <p class="muted">Entregue estes dados ao profissional. Você pode consultá-los de novo em Equipe e permissões, clicando no nome dele.</p>
+    <dl class="acc-data"><div><dt>Usuário</dt><dd>${esc(usuario)}</dd></div><div><dt>Senha</dt><dd>${esc(senha)}</dd></div></dl>
+    <div class="m-foot"><button type="button" class="btn ghost" data-act="copy-access" data-u="${esc(usuario)}" data-s="${esc(senha)}">Copiar acesso</button><button type="button" class="btn" data-act="close-modal">Concluir</button></div>`;
+}
+async function saveProf(form) {
+  if (!isAdmin(me())) return toast('Somente a administração pode editar profissionais.', 'err');
+  const p = prof(form.dataset.id), c = contaOf(p.id), fd = new FormData(form), val = k => (fd.get(k) ?? '').toString().trim();
+  const usuario = normUser(val('usuario')), senha = val('senha');
+  if (!val('nome')) return toast('Informe o nome do profissional.', 'err');
+  if (senha && !usuario) return toast('Informe o usuário de acesso.', 'err');
+  if (usuario && !/^[a-z0-9._-]{3,}$/.test(usuario)) return toast('Usuário: 3 ou mais caracteres, só letras minúsculas, números, ponto, hífen ou sublinhado.', 'err');
+  if (usuario && S().contas.some(x => x.usuario === usuario && x !== c)) return toast('Este usuário já está em uso.', 'err');
+  if (senha && senha.length < 6) return toast('A senha precisa ter pelo menos 6 caracteres.', 'err');
+  const keep = !!c && !senha && !c.senha && usuario === c.usuario;
+  if (usuario && !senha && !keep) return toast('Defina uma senha para este acesso.', 'err');
+  const before = { usuario: c?.usuario, senha: c?.senha };
+  Object.assign(p, { nome: val('nome'), area: val('area'), registro: val('registro'), role: val('role') || AREAS[val('area')].label, atuacao: val('atuacao') });
+  if (usuario && !keep) await setAccess(p.id, usuario, senha);
+  log('Atualizou profissional', p.nome, usuario && !keep && (before.usuario !== usuario || before.senha !== senha) ? (before.usuario ? 'acesso alterado' : 'acesso criado') : '');
+  Store.save(); closeModal(); render(); toast('Dados do profissional atualizados.');
 }
 
 /* ---------- roteamento ---------- */
@@ -524,8 +676,9 @@ function render() {
   if (name === 'paciente' && b === 'relatorio') { root.innerHTML = `<div class="print-shell">${viewRelatorio(u, a)}</div>`; document.title = `Relatório · ${patient(a)?.nome || ''}`; window.scrollTo(0, 0); return; }
   switch (name) {
     case 'pacientes': html = viewPacientes(u); break;
-    case 'paciente': ui.tab = ['resumo', 'metas', 'mapa', 'historico'].includes(b) ? b : 'resumo'; html = viewPaciente(u, a, ui.tab); active = 'pacientes'; break;
+    case 'paciente': ui.tab = ['resumo', 'metas', 'mapa', 'historico', 'agenda'].includes(b) ? b : 'resumo'; html = viewPaciente(u, a, ui.tab); active = 'pacientes'; break;
     case 'prazos': html = viewPrazos(u); break;
+    case 'agenda': html = viewAgenda(u); break;
     case 'equipe': html = viewEquipe(u); break;
     case 'auditoria': html = viewAuditoria(u); break;
     case 'proposta': html = viewProposta(); break;
@@ -554,6 +707,37 @@ document.addEventListener('click', e => {
     case 'new-patient': openModal(newPatientModal()); break;
     case 'new-prof': openModal(newProfModal()); break;
     case 'reset': Store.reset(); setSession(null); location.hash = ''; render(); toast('Dados da demonstração restaurados.'); break;
+    case 'open-prof': if (isAdmin(u)) openModal(profModal(t.dataset.id), true); break;
+    case 'show-pw': { const i = $('input[name=senha]', t.closest('form')); i.type = i.type === 'password' ? 'text' : 'password'; t.setAttribute('aria-label', i.type === 'password' ? 'Mostrar senha' : 'Ocultar senha'); break; }
+    case 'gen-pw': { const f = t.closest('form'), i = $('input[name=senha]', f); i.value = genPassword(); i.type = 'text'; const us = $('input[name=usuario]', f); if (!us.value) us.value = suggestUser($('input[name=nome]', f).value); toast('Nova senha gerada. Clique em Salvar alterações para aplicar.'); break; }
+    case 'copy-access': {
+      const f = t.closest('form'), us = t.dataset.u || (f && $('input[name=usuario]', f).value), pw = t.dataset.s || (f && $('input[name=senha]', f).value);
+      if (!us || !pw) { toast('Preencha usuário e senha antes de copiar.', 'err'); break; }
+      (navigator.clipboard ? navigator.clipboard.writeText(`Usuário: ${us}\nSenha: ${pw}`) : Promise.reject()).then(() => toast('Acesso copiado.'), () => toast('Não foi possível copiar. Selecione e copie manualmente.', 'err'));
+      break;
+    }
+    case 'cal-nav': { const k = t.dataset.scope === 'sch' ? 'schMonth' : 'agMonth'; ui[k] = shiftMonth(ui[k] || todayISO().slice(0, 7), Number(t.dataset.n)); render(); break; }
+    case 'cal-day': ui[t.dataset.scope === 'sch' ? 'schDay' : 'agDay'] = t.dataset.d; render(); break;
+    case 'slot': {
+      if (!isAdmin(u)) break;
+      const { p: pacienteId, prof: profId, d: data, h: hora } = t.dataset, why = conflito(profId, data, hora);
+      if (why) { toast(why, 'err'); break; }
+      const pa = patient(pacienteId);
+      S().atend.push({ id: 'a' + Date.now(), pacienteId, profId, data, hora, status: 'Agendado', por: u.id });
+      if (!pa.equipe.includes(profId)) pa.equipe.push(profId);
+      log('Agendou atendimento', `${pa.nome} · ${prof(profId).nome}`, `${fmt(data)} às ${hora}`);
+      Store.save(); render(); toast(`Atendimento agendado: ${fmt(data)} às ${hora}.`); break;
+    }
+    case 'cancel-atend': {
+      const x = S().atend.find(a => a.id === t.dataset.id); if (!x || !isAdmin(u)) break;
+      x.status = 'Cancelado'; log('Cancelou atendimento', `${patient(x.pacienteId)?.nome} · ${prof(x.profId)?.nome}`, `${fmt(x.data)} às ${x.hora}`);
+      Store.save(); render(); toast('Atendimento cancelado.'); break;
+    }
+    case 'del-indisp': {
+      const x = S().indisp.find(i => i.id === t.dataset.id); if (!x || x.profId !== u.id) break;
+      S().indisp = S().indisp.filter(i => i !== x); log('Removeu indisponibilidade', fmt(x.data), x.diaTodo ? 'dia todo' : `${x.inicio}–${x.fim}`);
+      Store.save(); render(); toast('Indisponibilidade removida.'); break;
+    }
     case 'print-report': { const p = patient(t.dataset.id); log('Exportou relatório', `${p.nome} · Relatório para os pais`); Store.save(); window.print(); break; }
   }
 });
@@ -569,6 +753,9 @@ document.addEventListener('change', e => {
   const t = e.target, k = t.dataset.change, u = me();
   if (k === 'g-status') { ui.gStatus = t.value; render(); }
   if (k === 'audit-user') { ui.auditUser = t.value; render(); }
+  if (k === 'ag-prof') { ui.agProf = t.value; render(); }
+  if (k === 'sch-prof') { ui.schProf = t.value; ui.schDay = ''; render(); }
+  if (k === 'indisp-mode') t.form.querySelectorAll('.hora-f').forEach(l => (l.hidden = t.value !== 'hora'));
   if (k === 'goal-area') { const sel = $('select[name=profId]', t.form); sel.innerHTML = profOptions(t.value); }
   if (k === 'perm') {
     const p = prof(t.dataset.id), key = t.dataset.k;
@@ -588,10 +775,30 @@ document.addEventListener('submit', e => {
     const p = { id: 'p' + Date.now(), nome: fd.get('nome').trim(), idade: parseInt(fd.get('idade'), 10), condicoes: fd.get('condicoes').split(',').map(s => s.trim()).filter(Boolean), desde: isoOf(todayDate()), equipe: [] };
     S().patients.push(p); log('Cadastrou paciente', p.nome); Store.save(); closeModal(); location.hash = `#/paciente/${p.id}/metas`; toast('Paciente cadastrado. Adicione a primeira meta.');
   }
-  if (kind === 'prof') {
+  if (kind === 'prof') return (async () => {
+    if (!isAdmin(me())) return toast('Somente a administração pode cadastrar profissionais.', 'err');
     if (S().profs.length >= MAX_PROFISSIONAIS) return toast('Limite de profissionais atingido.', 'err');
-    const n = { id: 'u' + Date.now(), nome: fd.get('nome').trim(), area: fd.get('area'), role: fd.get('role').trim() || AREAS[fd.get('area')].label, registro: fd.get('registro').trim(), perfil: 'terapeuta', perms: { verTodos: false, verOutras: true, editar: true, exportar: true, admin: false } };
-    S().profs.push(n); log('Adicionou profissional', n.nome); Store.save(); closeModal(); render(); toast('Profissional adicionado.');
+    const n = { id: 'u' + Date.now(), nome: fd.get('nome').trim(), area: fd.get('area'), role: fd.get('role').trim() || AREAS[fd.get('area')].label, registro: fd.get('registro').trim(), atuacao: '', perfil: 'terapeuta', perms: { verTodos: false, verOutras: true, editar: true, exportar: true, admin: false } };
+    const usuario = suggestUser(n.nome), senha = genPassword();
+    S().profs.push(n); await setAccess(n.id, usuario, senha);
+    log('Adicionou profissional', n.nome, `acesso gerado: ${usuario}`); Store.save(); render(); openModal(accessModal(n.nome, usuario, senha));
+  })();
+  if (kind === 'prof-edit') return saveProf(f);
+  if (kind === 'indisp') {
+    const u = me(), d = ui.agDay, dia = fd.get('modo') === 'dia', ini = fd.get('inicio'), fim = fd.get('fim');
+    if (!u || isAdmin(u) && ui.agProf !== u.id || !d || d < todayISO()) return toast('Escolha um dia a partir de hoje.', 'err');
+    if (!dia && (!ini || !fim || toMin(ini) >= toMin(fim))) return toast('O horário inicial precisa ser antes do final.', 'err');
+    let added = 0, aviso = false;
+    for (let i = 0; i < (parseInt(fd.get('semanas'), 10) || 1); i++) {
+      const dt = isoOf(new Date(parseISO(d).getTime() + i * 7 * 86400000));
+      if (S().indisp.some(x => x.profId === u.id && x.data === dt && x.diaTodo === dia && x.inicio === (dia ? '' : ini) && x.fim === (dia ? '' : fim))) continue;
+      S().indisp.push({ id: 'i' + Date.now() + i, profId: u.id, data: dt, diaTodo: dia, inicio: dia ? '' : ini, fim: dia ? '' : fim, motivo: fd.get('motivo').trim() });
+      added++;
+      if (atendDe(u.id, dt).some(x => dia || (toMin(x.hora) < toMin(fim) && toMin(ini) < toMin(x.hora) + DURACAO_MIN))) aviso = true;
+    }
+    log('Marcou indisponibilidade', fmt(d), `${dia ? 'dia todo' : `${ini}–${fim}`}${added > 1 ? ` · ${added} semanas` : ''}`);
+    Store.save(); render();
+    toast(aviso ? 'Indisponibilidade salva, mas já existe atendimento nesse período. Avise a administração.' : added ? `Indisponibilidade marcada em ${plural(added, 'dia', 'dias')}.` : 'Esse período já estava marcado.', aviso ? 'err' : '');
   }
 });
 window.addEventListener('hashchange', () => { closeModal(); document.body.classList.remove('side-open'); render(); window.scrollTo(0, 0); });

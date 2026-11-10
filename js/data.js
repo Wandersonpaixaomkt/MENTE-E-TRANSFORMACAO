@@ -8,11 +8,15 @@ const AREAS = {
   psicopedagogia:    { label: 'Psicopedagogia',    short: 'Psicoped.', color: '#C4863F' },
   psicomotricidade:  { label: 'Psicomotricidade',  short: 'Psicomotr.', color: '#3F9484' },
   nutricao:          { label: 'Nutrição',          short: 'Nutrição', color: '#B25B4B' },
+  fonoaudiologia:    { label: 'Fonoaudiologia',    short: 'Fono', color: '#3E86B0' },
 };
 const STATUS = ['Pendente', 'Em progresso', 'Concluído'];
-const MAX_PROFISSIONAIS = 10;
+const MAX_PROFISSIONAIS = 20;
 const ALERT_DAYS = 15;
-const STORE_KEY = 'mt-portal-demo-v1';
+const STORE_KEY = 'mt-portal-demo-v2';
+// agenda: atendimentos de 1 hora, das 08:00 às 18:00
+const SLOTS = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00'];
+const DURACAO_MIN = 60;
 
 const pad = n => String(n).padStart(2, '0');
 const isoOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -22,19 +26,28 @@ const parseISO = s => new Date(s + 'T12:00:00');
 const daysUntil = s => Math.round((parseISO(s) - todayDate()) / 86400000);
 
 function seedState() {
-  const P = (id, nome, area, role, registro, perfil) => ({
-    id, nome, area, role, registro, perfil,
+  const P = (id, nome, area, role, registro, perfil, atuacao = '') => ({
+    id, nome, area, role, registro, perfil, atuacao,
     perms: perfil === 'admin'
       ? { verTodos: true, verOutras: true, editar: true, exportar: true, admin: true }
       : { verTodos: false, verOutras: true, editar: true, exportar: true, admin: false },
   });
   const profs = [
-    P('vania',    'Vânia Ferreira Garcia', 'psicologia',       'Psicóloga · referência clínica', 'CRP 10/10002',   'admin'),
+    P('vania',    'Vânia Ferreira Garcia', 'psicologia',       'Psicóloga · Psicopedagoga especialista em Autismo', 'CRP 10/10102', 'admin'),
     P('audrey',   'Audrey Andrade',        'neuropsicologia',  'Neuropsicologia',                'CRP 10/06517',   'terapeuta'),
     P('moniele',  'Moniele Matos',         'psicopedagogia',   'Psicopedagoga clínica · esp. em neuropsicologia', '', 'terapeuta'),
     P('nessia',   'Néssia Arruda',         'psicomotricidade', 'Psicomotricista',                '',               'terapeuta'),
     P('laiane',   'Laiane de Paula',       'nutricao',         'Nutricionista',                  'CRN 7/17265',    'terapeuta'),
-    P('gabrielly','Gabrielly Lima',        'nutricao',         'Nutricionista infantil',         'CRN 7/17462/P',  'terapeuta'),
+    P('gabrielly','Gabrielly Lima',        'nutricao',         'Nutricionista · clínica e hospitalar', 'CRN-7 17462/P', 'terapeuta',
+      'Avaliação nutricional, planejamento alimentar individualizado e estratégias para equilíbrio do sistema nervoso. Especialização em andamento em Nutrição em Neuropsiquiatria.'),
+    P('lorrayne', 'Lorrayne Kendaly Luna Costa', 'neuropsicologia', 'Neuropsicóloga',          'CRP 10/11303',   'terapeuta',
+      'Avaliação neuropsicológica (TEA, TDAH, deficiência intelectual, dislexia, discalculia e transtornos do humor), psicoterapia infantil a partir dos 2 anos e orientação parental. Pós-graduanda em Intervenção ABA para Autismo e Deficiência Intelectual.'),
+    P('eduardo',  'Eduardo Vilhena',       'psicologia',       'Psicólogo · TCC',                'CRP 10/11278',   'terapeuta',
+      'Terapia Cognitivo-Comportamental, avaliação psicológica e acompanhamento em saúde mental, do diagnóstico ao tratamento.'),
+    P('psicanalista', 'Psicóloga e psicanalista (nome a informar)', 'psicologia', 'Psicóloga · Psicanalista', '', 'terapeuta',
+      'Escuta psicanalítica para adolescentes, adultos, idosos e casais: ansiedade, depressão e conflitos emocionais. Especialista em Saúde Mental.'),
+    P('costa',    'Dr. Costa',             'fonoaudiologia',   'Fonoaudiólogo · Terapeuta ABA',  '',               'terapeuta',
+      'Comunicação e linguagem, motricidade orofacial e dificuldades alimentares em crianças e adultos neurodivergentes, com princípios da ABA e abordagem sensório-motora.'),
   ];
 
   const patientsRaw = [
@@ -107,7 +120,18 @@ function seedState() {
     { ts: now - 75 * H,  por: 'vania',     acao: 'Alterou permissão', texto: 'Laiane de Paula', detalhe: 'ver todos os pacientes: não' },
   ];
 
-  return { v: 1, profs, patients, goals, audit };
+  // exemplos de agenda (datas relativas a hoje)
+  const indisp = [
+    { id: 'i1', profId: 'lorrayne', data: offDay(2), diaTodo: true, inicio: '', fim: '', motivo: 'Exemplo: curso' },
+    { id: 'i2', profId: 'nessia', data: offDay(1), diaTodo: false, inicio: '13:00', fim: '18:00', motivo: 'Exemplo: compromisso à tarde' },
+  ];
+  const atend = [
+    { id: 'a1', pacienteId: 'p1', profId: 'vania', data: offDay(3), hora: '09:00', status: 'Agendado', por: 'vania' },
+    { id: 'a2', pacienteId: 'p6', profId: 'gabrielly', data: offDay(4), hora: '14:00', status: 'Agendado', por: 'vania' },
+  ];
+  const contas = USERS.map(c => ({ ...c }));
+
+  return { v: 2, profs, patients, goals, audit, indisp, atend, contas };
 }
 
 const Store = {
@@ -124,11 +148,13 @@ const Store = {
 };
 
 /* ---------- acesso ----------
-   Único usuário cadastrado por enquanto. A senha não fica no código, só o hash (SHA-256).
+   Contas iniciais. A senha da administradora não fica no código, só o hash (SHA-256).
+   As contas dos profissionais são geradas pela administradora e ficam em Store.state.contas;
+   para que ela possa consultar a senha, essa senha fica guardada no navegador junto do hash.
    ATENÇÃO: sem servidor, isto é apenas uma barreira de tela. Qualquer pessoa com acesso aos
-   arquivos consegue contorná-la. Autenticação segura exige back-end. */
+   arquivos ou ao navegador consegue contorná-la. Autenticação segura exige back-end. */
 const USERS = [
-  { usuario: 'dravania', profId: 'vania', hash: 'ea1698cb1be4757061965545180b3ca0810b97d0a500f14422fce935e7e3e7cf' },
+  { usuario: 'dravania', profId: 'vania', hash: 'c117add62f69b58a461d8e4550203b6e314d282d579291a933fbf813f12af3c4' },
 ];
 const normUser = v => String(v || '').trim().replace(/^@+/, '').toLowerCase();
 
