@@ -207,6 +207,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .access-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .form-card textarea { width: 100%; resize: vertical; }
 .form-card .form-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.access-status { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }.access-status.active { color: #255b3b; background: #e9f7ed; }.access-status.inactive { color: #8a4646; background: #fff0f0; }
+.pending-access { display: grid; gap: 4px; margin-top: 18px; padding: 13px 14px; border: 1px solid #e1d5bd; border-radius: 10px; color: #645236; background: #fffaf2; font-size: 12px; }.pending-access span { color: var(--muted); }
+.permission-option, .toggle-option { display: flex; align-items: flex-start; gap: 10px; padding: 11px 0; border-top: 1px solid var(--line); cursor: pointer; }.permission-option:first-of-type { border-top: 0; }.permission-option input, .toggle-option input { margin-top: 3px; accent-color: var(--forest-700); }.permission-option strong, .permission-option small, .toggle-option strong, .toggle-option small { display: block; }.permission-option strong, .toggle-option strong { color: var(--ink); font-size: 12px; }.permission-option small, .toggle-option small { margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.35; }.is-muted { opacity: .62; }
 
 /* calendário: agenda do profissional e agendamento da administração */
 .calendar-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
