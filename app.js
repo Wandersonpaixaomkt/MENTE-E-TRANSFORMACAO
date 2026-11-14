@@ -12,6 +12,20 @@ const SPECIALTIES = [
   "Terapia Ocupacional",
   "Psicoterapia",
 ];
+const OTHER_SPECIALTY = "Outro";
+
+/* Lista de especialidades + "Outro", que libera um campo para digitar a especialidade de um profissional diferente. */
+function specialtyField(id, current = "") {
+  const custom = Boolean(current) && !SPECIALTIES.includes(current);
+  const options = [...SPECIALTIES, OTHER_SPECIALTY].map((item) => `<option ${item === (custom ? OTHER_SPECIALTY : current) ? "selected" : ""}>${item}</option>`).join("");
+  return `<div class="field"><label for="${id}">Especialidade</label><select id="${id}" name="specialty" required data-specialty-select>${current ? "" : '<option value="" selected disabled>Selecione</option>'}${options}</select></div><div class="field full ${custom ? "" : "hidden"}" data-specialty-other><label for="${id}-other">Qual é a especialidade?</label><input id="${id}-other" name="specialtyOther" value="${escapeHTML(custom ? current : "")}" placeholder="Ex.: Pedagogia, Acupuntura" /></div>`;
+}
+
+function readSpecialty(data) {
+  const picked = data.get("specialty");
+  return picked === OTHER_SPECIALTY ? String(data.get("specialtyOther") || "").trim() : picked;
+}
+
 
 const pad2 = (n) => String(n).padStart(2, "0");
 const dateKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -483,11 +497,11 @@ function professionalsView() {
 
 function professionalFormCard() {
   const professional = getProfessional(ui.editProfessionalId);
-  if (!professional) return `<h2>Novo profissional</h2><p>Depois de salvar os dados, gere o acesso e defina as ações permitidas em Usuários e ações.</p><form id="professional-form"><div class="form-grid"><div class="field full"><label for="professional-name">Nome completo</label><input id="professional-name" name="name" required placeholder="Nome do profissional" /></div><div class="field"><label for="professional-specialty">Especialidade</label><select id="professional-specialty" name="specialty" required><option value="" selected disabled>Selecione</option>${SPECIALTIES.map((item) => `<option>${item}</option>`).join("")}</select></div><div class="field"><label for="professional-code">Código ou registro</label><input id="professional-code" name="code" required placeholder="Ex.: CRP 00/00000" /></div></div><div class="form-actions"><button class="button" type="submit">Salvar profissional</button></div></form>`;
+  if (!professional) return `<h2>Novo profissional</h2><p>Depois de salvar os dados, gere o acesso e defina as ações permitidas em Usuários e ações.</p><form id="professional-form"><div class="form-grid"><div class="field full"><label for="professional-name">Nome completo</label><input id="professional-name" name="name" required placeholder="Nome do profissional" /></div>${specialtyField("professional-specialty")}<div class="field"><label for="professional-code">Código ou registro</label><input id="professional-code" name="code" required placeholder="Ex.: CRP 00/00000" /></div></div><div class="form-actions"><button class="button" type="submit">Salvar profissional</button></div></form>`;
   return `<h2>${escapeHTML(professional.name)}</h2><p>Edite os dados profissionais. O acesso, a senha e as ações permitidas são controlados separadamente.</p>
     <form id="professional-edit-form"><div class="form-grid">
       <div class="field full"><label for="edit-name">Nome completo</label><input id="edit-name" name="name" required value="${escapeHTML(professional.name)}" /></div>
-      <div class="field"><label for="edit-specialty">Especialidade</label><select id="edit-specialty" name="specialty" required>${SPECIALTIES.map((item) => `<option ${item === professional.specialty ? "selected" : ""}>${item}</option>`).join("")}</select></div>
+      ${specialtyField("edit-specialty", professional.specialty)}
       <div class="field"><label for="edit-code">Código ou registro</label><input id="edit-code" name="code" value="${escapeHTML(professional.code || "")}" placeholder="Ex.: CRP 00/00000" /></div>
       <div class="field full"><label for="edit-focus">Áreas de atuação</label><textarea id="edit-focus" name="focus" rows="3" placeholder="Resumo da atuação do profissional">${escapeHTML(professional.focus || "")}</textarea></div>
     </div>
@@ -604,7 +618,7 @@ function assignmentsView() {
     <div class="split-layout">
       <article class="panel form-card">
         ${patient ? `<div class="assignment-patient"><span class="case-avatar">${initials(patient.name)}</span><div><h3>${escapeHTML(patient.name)}</h3><span>${ageFromDate(patient.birthDate)} · Anamnese criada em ${dateLabel(patient.createdAt)} · ${escapeHTML(patient.createdBy || "Cadastro anterior")}</span></div>${statusTag(patient.status)}</div>` : `<div class="empty-state"><div class="empty-icon">◎</div><h2>Nenhuma ficha selecionada</h2><p>Crie uma anamnese antes de fazer um encaminhamento.</p><button class="button" type="button" data-nav="anamnese">Iniciar anamnese</button></div>`}
-        ${patient ? `<section class="form-section"><div class="form-section-title"><div><h3>Equipe multidisciplinar</h3><p>Clique nos profissionais que participarão da investigação e do plano de cuidado.</p></div></div><div class="specialty-filter">${["Todas", ...SPECIALTIES.filter((specialty) => state.professionals.some((item) => item.specialty === specialty))].map((specialty) => `<button type="button" class="filter-chip ${ui.filterSpecialty === specialty ? "active" : ""}" data-filter-specialty="${escapeHTML(specialty)}">${escapeHTML(specialty)}</button>`).join("")}</div><div class="professional-options">${listed.map((professional) => `<label class="professional-option ${assignedIds.has(professional.id) ? "selected" : ""}"><input type="checkbox" name="assigned-professional" value="${professional.id}" ${assignedIds.has(professional.id) ? "checked" : ""}/><span class="mini-avatar">${initials(professional.name)}</span><span><strong>${escapeHTML(professional.name)}</strong><span>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.code)}</span></span><span class="choice-check">${assignedIds.has(professional.id) ? "✓" : ""}</span></label>`).join("") || emptyInline("Não há profissionais nesta especialidade.")}</div></section>${scheduleSection(patient, selectedProfessionals)}<div class="form-actions"><button class="button secondary" type="button" data-nav="anamnese">← Voltar</button><button class="button" id="save-assignment" type="button">Salvar encaminhamento</button></div>` : ""}
+        ${patient ? `<section class="form-section"><div class="form-section-title"><div><h3>Equipe multidisciplinar</h3><p>Clique nos profissionais que participarão da investigação e do plano de cuidado.</p></div></div><div class="specialty-filter">${["Todas", ...new Set([...SPECIALTIES.filter((specialty) => state.professionals.some((item) => item.specialty === specialty)), ...state.professionals.map((item) => item.specialty).filter((specialty) => specialty && !SPECIALTIES.includes(specialty))])].map((specialty) => `<button type="button" class="filter-chip ${ui.filterSpecialty === specialty ? "active" : ""}" data-filter-specialty="${escapeHTML(specialty)}">${escapeHTML(specialty)}</button>`).join("")}</div><div class="professional-options">${listed.map((professional) => `<label class="professional-option ${assignedIds.has(professional.id) ? "selected" : ""}"><input type="checkbox" name="assigned-professional" value="${professional.id}" ${assignedIds.has(professional.id) ? "checked" : ""}/><span class="mini-avatar">${initials(professional.name)}</span><span><strong>${escapeHTML(professional.name)}</strong><span>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.code)}</span></span><span class="choice-check">${assignedIds.has(professional.id) ? "✓" : ""}</span></label>`).join("") || emptyInline("Não há profissionais nesta especialidade.")}</div></section>${scheduleSection(patient, selectedProfessionals)}<div class="form-actions"><button class="button secondary" type="button" data-nav="anamnese">← Voltar</button><button class="button" id="save-assignment" type="button">Salvar encaminhamento</button></div>` : ""}
       </article>
       <aside class="panel assignment-summary"><h2>Profissionais selecionados</h2><p>Os selecionados receberão uma notificação em seu painel.</p><div class="selection-list" id="selection-list">${assignedSummary(selectedProfessionals)}</div>${patient ? bookedSummary(patient) : ""}<button class="button secondary wide-action" type="button" data-nav="reports">Visualizar relatório integrado</button></aside>
     </div>`;
@@ -778,6 +792,11 @@ function bindEvents() {
   document.querySelectorAll("[data-case-tab]").forEach((button) => button.addEventListener("click", () => { ui.caseTab = button.dataset.caseTab; render(); }));
   document.querySelectorAll("[data-print-report]").forEach((button) => button.addEventListener("click", printReport));
 
+  document.querySelectorAll("[data-specialty-select]").forEach((select) => select.addEventListener("change", () => {
+    const other = select.closest("form").querySelector("[data-specialty-other]");
+    other.classList.toggle("hidden", select.value !== OTHER_SPECIALTY);
+    if (select.value === OTHER_SPECIALTY) other.querySelector("input").focus();
+  }));
   document.querySelector("#professional-form")?.addEventListener("submit", submitProfessional);
   document.querySelector("#anamnese-form")?.addEventListener("submit", submitAnamnese);
   document.querySelector("#patient-form")?.addEventListener("submit", submitPatient);
@@ -915,8 +934,10 @@ async function submitProfessionalEdit(event) {
   const data = new FormData(event.currentTarget);
   const name = data.get("name").trim();
   if (!name) return toast("Informe o nome do profissional.", true);
+  const specialty = readSpecialty(data);
+  if (!specialty) return toast("Escreva qual é a especialidade do profissional.", true);
   const saved = await commit(async () => {
-    await must(db.from("profissionais").update({ nome: name, especialidade: data.get("specialty"), registro: data.get("code").trim(), atuacao: data.get("focus").trim() }).eq("id", professional.id));
+    await must(db.from("profissionais").update({ nome: name, especialidade: specialty, registro: data.get("code").trim(), atuacao: data.get("focus").trim() }).eq("id", professional.id));
     ui.editProfessionalId = null;
   });
   if (saved) toast("Dados do profissional atualizados.");
@@ -926,7 +947,8 @@ async function submitProfessional(event) {
   event.preventDefault();
   if (ui.role !== "admin") return toast("Somente a administração pode cadastrar profissionais.", true);
   const data = new FormData(event.currentTarget);
-  const professional = { id: uid("prof"), name: data.get("name").trim(), specialty: data.get("specialty"), code: data.get("code").trim() };
+  const professional = { id: uid("prof"), name: data.get("name").trim(), specialty: readSpecialty(data), code: data.get("code").trim() };
+  if (!professional.specialty) return toast("Escreva qual é a especialidade do profissional.", true);
   const saved = await commit(async () => {
     await must(db.from("profissionais").insert({ id: professional.id, nome: professional.name, especialidade: professional.specialty, registro: professional.code }));
   });
