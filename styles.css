@@ -264,3 +264,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (max-width: 780px) { .scheduler-body { grid-template-columns: 1fr; } .cal-day { min-height: 54px; padding: 5px; } .cal-tag { font-size: 9px; } }
 
 .calendar.compact .cal-day.is-blocked { color: #a05555; }
+.signatures { grid-template-columns: minmax(0, 340px); justify-content: center; }
+.letterhead a { color: inherit; text-decoration: none; }
+.family-complaint { margin: 0; color: #393b46; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }

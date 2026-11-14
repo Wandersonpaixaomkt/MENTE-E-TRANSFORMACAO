@@ -27,10 +27,11 @@ const SESSION_MINUTES = 60;
 const SLOTS = Array.from({ length: 10 }, (_, i) => `${pad2(8 + i)}:00`);
 
 const CLINIC = {
-  name: "Clínica Mente & Transformação",
-  address: "Av. Exemplo, 1200 — Centro",
-  phone: "(00) 0000-0000",
-  email: "contato@menteetransformacao.com",
+  name: "Clínica Mente e Transformação",
+  cnpj: "56.367.431/0001-45",
+  address: "R. Apiaká, Quadra 48, Lote 16, 1° andar - Parque dos Carajás I, Parauapebas-PA",
+  phone: "(94) 99184-6332",
+  instagram: "mente_e_transformacao",
   director: "Dra. Vânia Ferreira Garcia",
   directorRole: "Psicóloga · CRP 10/10102 · Psicopedagoga especialista em Autismo",
   directorCode: "CRP 10/10102",
@@ -39,14 +40,14 @@ const CLINIC = {
 const blankState = () => ({ clinic: CLINIC, professionals: [], accounts: [], unavailability: [], patients: [], reports: {}, sessions: {} });
 
 let state = blankState();
-let ui = { role: null, account: null, setup: false, saving: false, newAccess: null, editProfessionalId: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null, filterSpecialty: "Todas", caseTab: "registro" };
+let ui = { role: null, account: null, setup: false, saving: false, newAccess: null, editProfessionalId: null, editPatientId: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null, filterSpecialty: "Todas", caseTab: "registro" };
 
 /* Acesso: login do Supabase Auth. Cada usuário vira um e-mail interno que nunca recebe mensagens.
    Quem pode ver e alterar cada dado é decidido pelas regras de acesso (RLS) do banco. */
 const db = window.supabase.createClient(window.MT_CONFIG.supabaseUrl, window.MT_CONFIG.supabaseKey);
 const loginEmail = (username) => `${username}@painel.mente-transformacao.invalid`;
 const normUser = (value) => String(value || "").trim().replace(/^@+/, "").toLowerCase();
-const ADMIN_VIEWS = ["professionals", "anamnese", "assignments"];
+const ADMIN_VIEWS = ["patients", "professionals", "anamnese", "assignments"];
 
 function suggestUsername(name) {
   const words = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^a-z\s]/g, " ").split(/\s+/).filter((word) => word && !["dr", "dra"].includes(word));
@@ -188,7 +189,7 @@ function monthCalendar(scope, month, cellFor, compact = false) {
   return `<div class="calendar ${compact ? "compact" : ""}"><div class="calendar-head"><button type="button" class="cal-nav" data-cal-nav="${scope}|-1" aria-label="Mês anterior">‹</button><strong>${monthTitle(month)}</strong><button type="button" class="cal-nav" data-cal-nav="${scope}|1" aria-label="Próximo mês">›</button></div><div class="calendar-grid">${WEEKDAYS.map((day) => `<span class="cal-weekday">${day}</span>`).join("")}${cells.join("")}</div></div>`;
 }
 
-function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; ui.draftSessions = []; ui.draftAssigned = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; ui.editPatientId = null; ui.draftSessions = []; ui.draftAssigned = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 
 function toast(message, isError = false) {
   const region = document.querySelector("#toast-region");
@@ -280,6 +281,7 @@ async function logout() {
 function navItems() {
   if (ui.role === "admin") return [
     ["dashboard", "◫", "Visão geral"],
+    ["patients", "☺", "Cadastro de paciente"],
     ["professionals", "♧", "Profissionais"],
     ["anamnese", "▤", "Nova anamnese"],
     ["assignments", "◎", "Encaminhamentos"],
@@ -324,7 +326,7 @@ function shellTemplate(content) {
 }
 
 function pageLabel() {
-  const labels = { dashboard: "Visão geral", professionals: "Profissionais", anamnese: "Nova anamnese", assignments: "Encaminhamentos", "my-cases": "Meus atendimentos", agenda: "Minha agenda", "case-detail": "Acompanhamento do caso", reports: "Relatório integrado" };
+  const labels = { dashboard: "Visão geral", patients: "Cadastro de paciente", professionals: "Profissionais", anamnese: "Nova anamnese", assignments: "Encaminhamentos", "my-cases": "Meus atendimentos", agenda: "Minha agenda", "case-detail": "Acompanhamento do caso", reports: "Relatório integrado" };
   return labels[ui.view] || "Painel";
 }
 
@@ -465,21 +467,45 @@ function guardianFields(guardian = {}) {
   return `<div class="guardian-row"><div class="field"><label>Categoria</label><select name="guardian-relation"><option value="" ${!guardian.relation ? "selected" : ""} disabled>Ex.: Mãe</option>${["Mãe", "Pai", "Avó", "Avô", "Tio", "Tia", "Responsável legal", "Outro"].map((item) => `<option ${guardian.relation === item ? "selected" : ""}>${item}</option>`).join("")}</select></div><div class="field"><label>Nome completo</label><input name="guardian-name" value="${escapeHTML(guardian.name || "")}" placeholder="Nome" /></div><div class="field"><label>CPF</label><input name="guardian-cpf" value="${escapeHTML(guardian.cpf || "")}" placeholder="000.000.000-00" /></div><div class="field"><label>Telefone</label><input name="guardian-phone" value="${escapeHTML(guardian.phone || "")}" placeholder="(00) 00000-0000" /></div><div class="field"><label>E-mail</label><input name="guardian-email" type="email" value="${escapeHTML(guardian.email || "")}" placeholder="email@exemplo.com" /></div><button class="icon-button remove-guardian" type="button" title="Remover responsável" aria-label="Remover responsável">×</button></div>`;
 }
 
+/* Primeira parte da ficha: responsáveis, dados do paciente, hipótese, documento anterior e queixa principal da família.
+   Usada na "Nova anamnese" e no "Cadastro de paciente" (vazia para novo, preenchida para editar). */
+function patientFormSections(patient = null) {
+  const guardians = patient?.guardians?.length ? patient.guardians : [{}];
+  const hasHypothesis = Boolean(patient?.hypothesis?.has), hasDiagnosis = Boolean(patient?.diagnosis?.has);
+  const radio = (name, yes) => `<div class="radio-line"><label class="radio-pill"><input type="radio" name="${name}" value="yes" ${yes ? "checked" : ""} /> Sim</label><label class="radio-pill"><input type="radio" name="${name}" value="no" ${yes ? "" : "checked"} /> Não</label></div>`;
+  const genders = ["Feminino", "Masculino", "Outro", "Prefere não informar"];
+  return `
+    <section class="form-section"><div class="form-section-title"><div><h3>Responsáveis para contato</h3></div><button class="button secondary small" id="add-guardian" type="button">+ Adicionar</button></div><div id="guardians-container">${guardians.map(guardianFields).join("")}</div></section>
+    <section class="form-section"><div class="form-section-title"><div><h3>Cadastro do paciente</h3></div></div><div class="form-grid three"><div class="field full"><label for="patient-name">Nome completo</label><input id="patient-name" name="patientName" required value="${escapeHTML(patient?.name || "")}" placeholder="Nome do paciente" /></div><div class="field"><label for="patient-gender">Sexo</label><select id="patient-gender" name="gender" required><option value="" ${patient?.gender ? "" : "selected"} disabled>Selecione</option>${genders.map((item) => `<option ${patient?.gender === item ? "selected" : ""}>${item}</option>`).join("")}</select></div><div class="field"><label for="patient-birth">Data de nascimento</label><input id="patient-birth" type="date" name="birthDate" required value="${escapeHTML(patient?.birthDate || "")}" /></div><div class="field"><label for="patient-cpf">CPF</label><input id="patient-cpf" name="patientCpf" value="${escapeHTML(patient?.cpf || "")}" placeholder="000.000.000-00" /></div></div></section>
+    <section class="form-section"><div class="form-section-title"><div><h3>Hipótese diagnóstica</h3></div></div>${radio("hypothesis", hasHypothesis)}<div class="conditional ${hasHypothesis ? "" : "hidden"}" id="hypothesis-details"><div class="field"><label for="hypothesis-text">Relato da família ou do responsável</label><textarea id="hypothesis-text" name="hypothesisText" placeholder="Descreva a hipótese apresentada durante a entrevista.">${escapeHTML(patient?.hypothesis?.narrative || "")}</textarea></div></div></section>
+    <section class="form-section"><div class="form-section-title"><div><h3>Diagnóstico ou documento anterior</h3></div></div>${radio("diagnosis", hasDiagnosis)}<div class="conditional ${hasDiagnosis ? "" : "hidden"}" id="diagnosis-details"><div class="upload-box"><label class="upload-label" for="diagnosis-file">Anexar arquivo</label><input id="diagnosis-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx" /><span class="file-name" id="file-name">${escapeHTML(patient?.diagnosis?.fileName || "Nenhum arquivo selecionado")}</span></div></div></section>
+    <section class="form-section"><div class="form-section-title"><div><h3>Queixa principal da família</h3></div></div><div class="field"><textarea name="familyComplaint" placeholder="Descreva o motivo da busca, contexto e principais dificuldades relatadas.">${escapeHTML(patient?.familyComplaint || "")}</textarea></div></section>`;
+}
+
 function anamneseView() {
   return `
     ${sectionHeading("Nova ficha de anamnese", "")}
     <div class="split-layout">
       <form class="panel form-card" id="anamnese-form">
         <h2>Dados de entrada</h2>
-        <section class="form-section"><div class="form-section-title"><div><h3>Responsáveis para contato</h3></div><button class="button secondary small" id="add-guardian" type="button">+ Adicionar</button></div><div id="guardians-container">${guardianFields()}</div></section>
-        <section class="form-section"><div class="form-section-title"><div><h3>Cadastro do paciente</h3></div></div><div class="form-grid three"><div class="field full"><label for="patient-name">Nome completo</label><input id="patient-name" name="patientName" required placeholder="Nome do paciente" /></div><div class="field"><label for="patient-gender">Sexo</label><select id="patient-gender" name="gender" required><option value="" selected disabled>Selecione</option><option>Feminino</option><option>Masculino</option><option>Outro</option><option>Prefere não informar</option></select></div><div class="field"><label for="patient-birth">Data de nascimento</label><input id="patient-birth" type="date" name="birthDate" required /></div><div class="field"><label for="patient-cpf">CPF</label><input id="patient-cpf" name="patientCpf" placeholder="000.000.000-00" /></div></div></section>
-        <section class="form-section"><div class="form-section-title"><div><h3>Hipótese diagnóstica</h3></div></div><div class="radio-line"><label class="radio-pill"><input type="radio" name="hypothesis" value="yes" /> Sim</label><label class="radio-pill"><input type="radio" name="hypothesis" value="no" checked /> Não</label></div><div class="conditional hidden" id="hypothesis-details"><div class="field"><label for="hypothesis-text">Relato da família ou do responsável</label><textarea id="hypothesis-text" name="hypothesisText" placeholder="Descreva a hipótese apresentada durante a entrevista."></textarea></div></div></section>
-        <section class="form-section"><div class="form-section-title"><div><h3>Diagnóstico ou documento anterior</h3></div></div><div class="radio-line"><label class="radio-pill"><input type="radio" name="diagnosis" value="yes" /> Sim</label><label class="radio-pill"><input type="radio" name="diagnosis" value="no" checked /> Não</label></div><div class="conditional hidden" id="diagnosis-details"><div class="upload-box"><label class="upload-label" for="diagnosis-file">Anexar arquivo</label><input id="diagnosis-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx" /><span class="file-name" id="file-name">Nenhum arquivo selecionado</span></div></div></section>
-        <section class="form-section"><div class="form-section-title"><div><h3>Anamnese</h3></div></div><div class="field"><textarea name="familyComplaint" placeholder="Descreva o motivo da busca, contexto e principais dificuldades relatadas."></textarea></div></section>
+        ${patientFormSections()}
         <div class="form-actions"><button class="button secondary" type="reset">Limpar</button><button class="button" type="submit">Salvar e selecionar profissionais →</button></div>
       </form>
       ${processAside(1)}
     </div>`;
+}
+
+function patientsView() {
+  const editing = state.patients.find((patient) => patient.id === ui.editPatientId) || null;
+  const rows = state.patients.map((patient) => `<tr class="is-clickable ${patient.id === ui.editPatientId ? "is-selected" : ""}" tabindex="0" data-edit-patient="${patient.id}" aria-label="Ver e editar ${escapeHTML(patient.name)}"><td><div class="person-cell"><span class="mini-avatar">${initials(patient.name)}</span><div><strong>${escapeHTML(patient.name)}</strong><small class="cell-muted">${ageFromDate(patient.birthDate)}${patient.gender ? ` · ${escapeHTML(patient.gender)}` : ""}</small></div></div></td><td class="cell-muted">${escapeHTML(patient.guardians.map((guardian) => guardian.name).filter(Boolean).join(", ") || "Não informado")}</td><td>${statusTag(patient.status)}</td><td><div class="table-actions"><button class="button secondary small" type="button" data-refer-patient="${patient.id}">Encaminhar</button><button class="button danger small" type="button" data-delete-patient="${patient.id}">Remover</button></div></td></tr>`).join("");
+  return `
+    ${sectionHeading("Cadastro de paciente", "Cadastre, edite e remova pacientes. Depois de cadastrar, use Encaminhar para escolher os profissionais.", `<button class="button" type="button" data-new-patient>+ Cadastrar paciente</button>`)}
+    <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Pacientes cadastrados</h2><span class="cell-muted">${state.patients.length} paciente${state.patients.length === 1 ? "" : "s"}</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Paciente</th><th>Responsáveis</th><th>Situação</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="4">${emptyInline("Nenhum paciente cadastrado.")}</td></tr>`}</tbody></table></div></article>
+    <form class="panel form-card" id="patient-form" style="margin-top:20px">
+      <h2>${editing ? `Editar ${escapeHTML(editing.name)}` : "Novo paciente"}</h2>
+      ${patientFormSections(editing)}
+      <div class="form-actions">${editing ? `<button class="button secondary" type="button" data-cancel-patient>Cancelar</button>` : `<button class="button secondary" type="reset">Limpar</button>`}<button class="button" type="submit">${editing ? "Salvar alterações" : "Salvar paciente"}</button></div>
+    </form>`;
 }
 
 function processAside(current) {
@@ -583,7 +609,9 @@ function reportPaper(patient, print = false) {
     return `<section class="report-section"><h3>${title}</h3>${items.length ? items.map((professional) => `<div class="professional-report"><strong>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.name)}</strong><p>${escapeHTML(reports[professional.id][field])}</p></div>`).join("") : `<p class="report-empty">Nenhum registro profissional preenchido nesta seção.</p>`}</section>`;
   };
   const guardians = patient.guardians;
-  return `<article class="report-paper ${print ? "print-paper" : ""}"><header class="letterhead"><img class="report-logo" src="assets/logo-horizontal-azul.png" alt="Mente e Transformação · Clínica"><h2>${escapeHTML(state.clinic.name)}</h2><p>${escapeHTML(state.clinic.address)} · ${escapeHTML(state.clinic.phone)} · ${escapeHTML(state.clinic.email)}</p><div class="report-title">Relatório profissional integrado</div></header><section class="report-section"><h3>Dados de cadastro</h3><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Sexo</td><td>${escapeHTML(patient.gender)}</td></tr><tr><td>Nascimento</td><td>${dateLabel(patient.birthDate)} · ${ageFromDate(patient.birthDate)}</td><td>CPF</td><td>${escapeHTML(patient.cpf || "Não informado")}</td></tr><tr><td>Responsáveis</td><td colspan="3">${guardians.map((guardian) => `${escapeHTML(guardian.relation || "Responsável")}: ${escapeHTML(guardian.name)} · CPF ${escapeHTML(guardian.cpf || "não informado")}`).join("<br>")}</td></tr><tr><td>Queixa familiar</td><td colspan="3">${escapeHTML(patient.familyComplaint)}</td></tr></tbody></table></section>${reportSection("complaint", "Queixa principal por área")}${reportSection("plan", "Plano de ação")}${reportSection("result", "Resultados e evolução")}<section class="signatures">${guardians.map((guardian) => `<div class="signature">${escapeHTML(guardian.name)}<span>${escapeHTML(guardian.relation || "Responsável")} · CPF ${escapeHTML(guardian.cpf || "")}</span></div>`).join("")}<div class="signature">${escapeHTML(state.clinic.director)}<span>${escapeHTML(state.clinic.directorRole)}</span></div></section><footer class="report-footer">${escapeHTML(state.clinic.name)} · Documento gerado em ${dateLabel(new Date().toISOString().slice(0, 10))}</footer></article>`;
+  const clinic = state.clinic;
+  const contact = [`CNPJ ${escapeHTML(clinic.cnpj)}`, escapeHTML(clinic.phone), `Instagram: <a href="https://www.instagram.com/${clinic.instagram}/" target="_blank" rel="noopener">${escapeHTML(clinic.instagram)}</a>`].join(" · ");
+  return `<article class="report-paper ${print ? "print-paper" : ""}"><header class="letterhead"><img class="report-logo" src="assets/logo-horizontal-azul.png" alt="Mente e Transformação · Clínica"><h2>${escapeHTML(clinic.name)}</h2><p>${contact}</p><p>${escapeHTML(clinic.address)}</p><div class="report-title">Relatório profissional integrado</div></header><section class="report-section"><h3>Dados de cadastro</h3><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Sexo</td><td>${escapeHTML(patient.gender)}</td></tr><tr><td>Nascimento</td><td>${dateLabel(patient.birthDate)} · ${ageFromDate(patient.birthDate)}</td><td>CPF</td><td>${escapeHTML(patient.cpf || "Não informado")}</td></tr><tr><td>Responsáveis</td><td colspan="3">${guardians.map((guardian) => `${escapeHTML(guardian.relation || "Responsável")}: ${escapeHTML(guardian.name)} · CPF ${escapeHTML(guardian.cpf || "não informado")}`).join("<br>")}</td></tr></tbody></table></section><section class="report-section"><h3>Queixa principal da família</h3><p class="family-complaint">${patient.familyComplaint.trim() ? escapeHTML(patient.familyComplaint) : '<span class="report-empty">Não informada.</span>'}</p></section>${reportSection("complaint", "Queixa principal por área")}${reportSection("plan", "Plano de ação")}${reportSection("result", "Resultados e evolução")}<section class="signatures"><div class="signature">${escapeHTML(clinic.name)}<span>CNPJ ${escapeHTML(clinic.cnpj)}</span></div></section><footer class="report-footer">${escapeHTML(clinic.name)} · Documento gerado em ${dateLabel(new Date().toISOString().slice(0, 10))}</footer></article>`;
 }
 
 function emptyInline(text) { return `<div class="empty-inline">${escapeHTML(text)}</div>`; }
@@ -594,7 +622,8 @@ function viewTemplate() {
   if (ui.role !== "admin" && ADMIN_VIEWS.includes(ui.view)) ui.view = "dashboard";
   if (ui.role === "admin" && ui.view === "agenda") ui.view = "dashboard";
   let content;
-  if (ui.view === "professionals") content = professionalsView();
+  if (ui.view === "patients") content = patientsView();
+  else if (ui.view === "professionals") content = professionalsView();
   else if (ui.view === "anamnese") content = anamneseView();
   else if (ui.view === "assignments") content = assignmentsView();
   else if (ui.view === "my-cases") content = myCasesView();
@@ -637,6 +666,16 @@ function bindEvents() {
 
   document.querySelector("#professional-form")?.addEventListener("submit", submitProfessional);
   document.querySelector("#anamnese-form")?.addEventListener("submit", submitAnamnese);
+  document.querySelector("#patient-form")?.addEventListener("submit", submitPatient);
+  document.querySelectorAll("[data-edit-patient]").forEach((row) => {
+    const open = () => { ui.editPatientId = row.dataset.editPatient; render(); document.querySelector("#patient-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+    row.addEventListener("click", (event) => { if (!event.target.closest("button")) open(); });
+    row.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.target === row) open(); });
+  });
+  document.querySelector("[data-new-patient]")?.addEventListener("click", () => { ui.editPatientId = null; render(); document.querySelector("#patient-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); });
+  document.querySelector("[data-cancel-patient]")?.addEventListener("click", () => { ui.editPatientId = null; render(); });
+  document.querySelectorAll("[data-refer-patient]").forEach((button) => button.addEventListener("click", () => { ui.activeCaseId = button.dataset.referPatient; ui.filterSpecialty = "Todas"; setView("assignments"); }));
+  document.querySelectorAll("[data-delete-patient]").forEach((button) => button.addEventListener("click", () => deletePatient(button.dataset.deletePatient)));
   document.querySelector("#add-guardian")?.addEventListener("click", () => { document.querySelector("#guardians-container").insertAdjacentHTML("beforeend", guardianFields()); bindGuardianButtons(); });
   bindGuardianButtons();
   document.querySelectorAll('input[name="hypothesis"]').forEach((input) => input.addEventListener("change", toggleConditionalFields));
@@ -746,24 +785,30 @@ async function deleteProfessional(id) {
   const professional = getProfessional(id);
   if (!professional) return;
   const used = state.patients.some((patient) => patient.assignedIds.includes(id));
-  if (used) return toast("Este profissional possui casos encaminhados e não pode ser removido nesta etapa.", true);
+  if (used) return toast("Este profissional está encaminhado a pacientes. Troque o encaminhamento desses casos antes de remover.", true);
+  if (!window.confirm(`Remover ${professional.name} da equipe?\n\nO acesso dele ao sistema também será apagado. Esta ação não pode ser desfeita.`)) return;
   if (ui.editProfessionalId === id) ui.editProfessionalId = null;
   if (await commit(() => must(db.rpc("remover_profissional", { p_id: id })))) toast("Profissional removido da equipe.");
 }
 
-async function submitAnamnese(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
+function readPatientForm(form, current = null) {
   const data = new FormData(form);
-  const guardians = [...document.querySelectorAll(".guardian-row")].map((row) => ({ relation: row.querySelector('[name="guardian-relation"]').value, name: row.querySelector('[name="guardian-name"]').value.trim(), cpf: row.querySelector('[name="guardian-cpf"]').value.trim(), phone: row.querySelector('[name="guardian-phone"]').value.trim(), email: row.querySelector('[name="guardian-email"]').value.trim() })).filter((guardian) => guardian.name || guardian.cpf || guardian.phone || guardian.email);
+  const guardians = [...form.querySelectorAll(".guardian-row")].map((row) => ({ relation: row.querySelector('[name="guardian-relation"]').value, name: row.querySelector('[name="guardian-name"]').value.trim(), cpf: row.querySelector('[name="guardian-cpf"]').value.trim(), phone: row.querySelector('[name="guardian-phone"]').value.trim(), email: row.querySelector('[name="guardian-email"]').value.trim() })).filter((guardian) => guardian.name || guardian.cpf || guardian.phone || guardian.email);
   const hasHypothesis = data.get("hypothesis") === "yes";
   const hasDiagnosis = data.get("diagnosis") === "yes";
-  const row = {
-    id: uid("case"), nome: data.get("patientName").trim(), sexo: data.get("gender") || "", nascimento: data.get("birthDate") || null, cpf: data.get("patientCpf").trim(), responsaveis: guardians,
+  const pickedFile = form.querySelector("#diagnosis-file")?.files?.[0]?.name;
+  return {
+    nome: data.get("patientName").trim(), sexo: data.get("gender") || "", nascimento: data.get("birthDate") || null, cpf: data.get("patientCpf").trim(), responsaveis: guardians,
     hipotese: { has: hasHypothesis, narrative: hasHypothesis ? data.get("hypothesisText").trim() : "" },
-    diagnostico: { has: hasDiagnosis, fileName: hasDiagnosis ? (document.querySelector("#diagnosis-file").files?.[0]?.name || "Documento indicado pela família") : "" },
+    diagnostico: { has: hasDiagnosis, fileName: hasDiagnosis ? (pickedFile || current?.diagnosis?.fileName || "Documento indicado pela família") : "" },
     anamnese: data.get("familyComplaint").trim(),
   };
+}
+
+async function submitAnamnese(event) {
+  event.preventDefault();
+  if (ui.role !== "admin") return toast("Somente a administração pode cadastrar pacientes.", true);
+  const row = { id: uid("case"), ...readPatientForm(event.currentTarget) };
   const saved = await commit(async () => {
     await must(db.from("pacientes").insert(row));
     Object.assign(ui, { activeCaseId: row.id, filterSpecialty: "Todas", view: "assignments", newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null });
@@ -771,6 +816,33 @@ async function submitAnamnese(event) {
   if (!saved) return;
   window.scrollTo({ top: 0, behavior: "smooth" });
   toast("Ficha de anamnese salva. Agora selecione os profissionais.");
+}
+
+async function submitPatient(event) {
+  event.preventDefault();
+  if (ui.role !== "admin") return toast("Somente a administração pode cadastrar pacientes.", true);
+  const current = state.patients.find((patient) => patient.id === ui.editPatientId) || null;
+  const row = readPatientForm(event.currentTarget, current);
+  const saved = await commit(async () => {
+    if (current) await must(db.from("pacientes").update(row).eq("id", current.id));
+    else await must(db.from("pacientes").insert({ id: uid("case"), ...row }));
+    ui.editPatientId = null;
+  });
+  if (!saved) return;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+  toast(current ? "Dados do paciente atualizados." : "Paciente cadastrado. Use Encaminhar para escolher os profissionais.");
+}
+
+async function deletePatient(id) {
+  if (ui.role !== "admin") return toast("Somente a administração pode remover pacientes.", true);
+  const patient = state.patients.find((item) => item.id === id);
+  if (!patient) return;
+  const sessions = Object.values(state.sessions[id] || {}).reduce((total, list) => total + list.length, 0);
+  const records = Object.keys(patientReports(id)).length;
+  const lost = [sessions && `${sessions} atendimento${sessions === 1 ? "" : "s"} agendado${sessions === 1 ? "" : "s"}`, records && `${records} evolução${records === 1 ? "" : "ões"} de profissionais`].filter(Boolean);
+  if (!window.confirm(`Remover ${patient.name}?${lost.length ? `\n\nTambém serão apagados: ${lost.join(" e ")}.` : ""}\n\nEsta ação não pode ser desfeita.`)) return;
+  if (ui.editPatientId === id) ui.editPatientId = null;
+  if (await commit(() => must(db.from("pacientes").delete().eq("id", id)))) toast("Paciente removido.");
 }
 
 async function saveAssignment() {
