@@ -43,25 +43,33 @@ const CLINIC = {
   directorCode: "CRP 10/10102",
 };
 
+const DEFAULT_PERMISSIONS = {
+  criar_anamnese: true,
+  registrar_evolucao: true,
+  gerenciar_agenda: true,
+};
+
+const PERMISSION_DEFINITIONS = [
+  ["criar_anamnese", "Criar ficha de anamnese", "Cadastrar o primeiro registro do paciente."],
+  ["registrar_evolucao", "Registrar evolução", "Preencher e atualizar o registro clínico dos casos encaminhados."],
+  ["gerenciar_agenda", "Gerenciar agenda", "Marcar indisponibilidades e adicionar sessões aos próprios casos."],
+];
+
 const blankState = () => ({ clinic: CLINIC, professionals: [], accounts: [], unavailability: [], patients: [], reports: {}, evolutions: {}, history: {}, sessions: {} });
 
 let state = blankState();
-let ui = { role: null, account: null, setup: false, saving: false, newAccess: null, editProfessionalId: null, editPatientId: null, anamneseFromId: null, reportPeriod: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null, filterSpecialty: "Todas", caseTab: "registro" };
+let ui = { role: null, account: null, setup: false, saving: false, newAccess: null, editProfessionalId: null, editAccountId: null, editPatientId: null, anamneseFromId: null, reportPeriod: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null, filterSpecialty: "Todas", caseTab: "registro" };
 
 /* Acesso: login do Supabase Auth. Cada usuário vira um e-mail interno que nunca recebe mensagens.
    Quem pode ver e alterar cada dado é decidido pelas regras de acesso (RLS) do banco. */
 const db = window.supabase.createClient(window.MT_CONFIG.supabaseUrl, window.MT_CONFIG.supabaseKey);
 const loginEmail = (username) => `${username}@painel.mente-transformacao.invalid`;
 const normUser = (value) => String(value || "").trim().replace(/^@+/, "").toLowerCase();
-const ADMIN_VIEWS = ["patients", "professionals", "anamnese", "assignments"];
+const USERNAME_PATTERN = /^[a-z0-9._&-]{3,}$/;
+const ADMIN_VIEWS = ["patients", "professionals", "accesses", "assignments"];
 
-function suggestUsername(name) {
-  const words = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\([^)]*\)/g, " ").replace(/[^a-z\s]/g, " ").split(/\s+/).filter((word) => word && !["dr", "dra"].includes(word));
-  const base = (words.length > 1 ? `${words[0]}.${words[words.length - 1]}` : words[0] || "profissional");
-  let username = base, n = 2;
-  while (state.accounts.some((account) => account.username === username)) username = `${base}${n++}`;
-  return username;
-}
+function permissionsOf(value) { return { ...DEFAULT_PERMISSIONS, ...(value && typeof value === "object" ? value : {}) }; }
+function can(permission) { return ui.role === "admin" || Boolean(ui.account?.permissions?.[permission]); }
 
 function generatePassword(length = 10) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
@@ -72,7 +80,6 @@ async function loadData() {
   const results = await Promise.all([
     db.from("profissionais").select("*").order("nome"),
     db.from("perfis").select("*"),
-    ui.role === "admin" ? db.from("senhas_acesso").select("*") : { data: [] },
     db.from("pacientes").select("*").order("criado_em", { ascending: false }),
     db.from("evolucoes").select("*"),
     db.from("sessoes").select("*").order("data").order("horario"),
@@ -81,12 +88,11 @@ async function loadData() {
   ]);
   const failed = results.find((result) => result.error);
   if (failed) throw failed.error;
-  const [professionals, profiles, passwords, patients, reports, sessions, unavailability, history] = results.map((result) => result.data);
-  const passwordOf = Object.fromEntries(passwords.map((row) => [row.user_id, row.senha]));
+  const [professionals, profiles, patients, reports, sessions, unavailability, history] = results.map((result) => result.data);
   const next = blankState();
   next.professionals = professionals.map((row) => ({ id: row.id, name: row.nome, specialty: row.especialidade, code: row.registro, focus: row.atuacao }));
-  next.accounts = profiles.map((row) => ({ username: row.usuario, role: row.papel === "admin" ? "admin" : "professional", professionalId: row.profissional_id, password: passwordOf[row.user_id] || "" }));
-  next.patients = patients.map((row) => ({ id: row.id, name: row.nome, gender: row.sexo, birthDate: row.nascimento || "", cpf: row.cpf, guardians: row.responsaveis, hypothesis: row.hipotese, diagnosis: row.diagnostico, familyComplaint: row.anamnese, assignedIds: row.profissionais_ids, status: row.status, createdAt: row.criado_em.slice(0, 10) }));
+  next.accounts = profiles.map((row) => ({ userId: row.user_id, username: row.usuario, role: row.papel === "admin" ? "admin" : "professional", professionalId: row.profissional_id, active: row.ativo !== false, permissions: permissionsOf(row.permissoes) }));
+  next.patients = patients.map((row) => ({ id: row.id, name: row.nome, gender: row.sexo, birthDate: row.nascimento || "", cpf: row.cpf, guardians: row.responsaveis, hypothesis: row.hipotese, diagnosis: row.diagnostico, familyComplaint: row.anamnese, assignedIds: row.profissionais_ids, status: row.status, createdAt: row.criado_em.slice(0, 10), createdByUserId: row.criado_por || null, createdBy: row.criado_por_usuario || "Cadastro anterior" }));
   const now = currentPeriod();
   reports.forEach((row) => {
     const record = { complaint: row.queixa, plan: row.plano, result: row.resultado, updatedAt: row.atualizado_em };
@@ -218,7 +224,7 @@ function monthCalendar(scope, month, cellFor, compact = false) {
   return `<div class="calendar ${compact ? "compact" : ""}"><div class="calendar-head"><button type="button" class="cal-nav" data-cal-nav="${scope}|-1" aria-label="Mês anterior">‹</button><strong>${monthTitle(month)}</strong><button type="button" class="cal-nav" data-cal-nav="${scope}|1" aria-label="Próximo mês">›</button></div><div class="calendar-grid">${WEEKDAYS.map((day) => `<span class="cal-weekday">${day}</span>`).join("")}${cells.join("")}</div></div>`;
 }
 
-function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; ui.editPatientId = null; ui.anamneseFromId = null; ui.draftSessions = []; ui.draftAssigned = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; ui.editAccountId = null; ui.editPatientId = null; ui.anamneseFromId = null; ui.draftSessions = []; ui.draftAssigned = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 
 function toast(message, isError = false) {
   const region = document.querySelector("#toast-region");
@@ -286,8 +292,9 @@ async function startSession() {
   const { data: profile, error } = await db.from("perfis").select("*").eq("user_id", session.user.id).maybeSingle();
   if (error) { await showLogin(); return toast("Não foi possível carregar o seu perfil. Verifique a conexão.", true); }
   if (!profile) { await db.auth.signOut(); await showLogin(); return toast("Este acesso não está ligado a nenhum perfil da clínica.", true); }
+  if (profile.ativo === false) { await db.auth.signOut(); await showLogin(); return toast("Este acesso está desativado. Procure a administração da clínica.", true); }
   ui.role = profile.papel === "admin" ? "admin" : "professional";
-  ui.account = { username: profile.usuario, role: ui.role, professionalId: profile.profissional_id };
+  ui.account = { userId: profile.user_id, username: profile.usuario, role: ui.role, professionalId: profile.profissional_id, active: profile.ativo !== false, permissions: permissionsOf(profile.permissoes) };
   if (ui.role === "professional") ui.professionalId = profile.profissional_id;
   ui.view = "dashboard"; ui.newAccess = null;
   try { await loadData(); } catch (error) { console.error(error); toast("Não foi possível carregar os dados. Verifique a conexão.", true); }
@@ -296,7 +303,7 @@ async function startSession() {
 
 async function showLogin() {
   state = blankState();
-  Object.assign(ui, { role: null, account: null, newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null });
+  Object.assign(ui, { role: null, account: null, newAccess: null, editProfessionalId: null, editAccountId: null, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null });
   const { data } = await db.rpc("precisa_configurar");
   ui.setup = data === true;
   render();
@@ -312,16 +319,19 @@ function navItems() {
     ["dashboard", "◫", "Visão geral"],
     ["patients", "☺", "Cadastro de paciente"],
     ["professionals", "♧", "Profissionais"],
+    ["accesses", "⚿", "Usuários e ações"],
     ["anamnese", "▤", "Nova anamnese"],
     ["assignments", "◎", "Encaminhamentos"],
     ["reports", "▧", "Relatórios"],
   ];
-  return [
+  const items = [
     ["dashboard", "◫", "Meu painel"],
+    ...(can("criar_anamnese") ? [["anamnese", "▤", "Nova anamnese"]] : []),
     ["my-cases", "◎", "Meus atendimentos"],
-    ["agenda", "▦", "Minha agenda"],
+    ...(can("gerenciar_agenda") ? [["agenda", "▦", "Minha agenda"]] : []),
     ["reports", "▧", "Relatório integrado"],
   ];
+  return items;
 }
 
 function shellTemplate(content) {
@@ -355,7 +365,7 @@ function shellTemplate(content) {
 }
 
 function pageLabel() {
-  const labels = { dashboard: "Visão geral", patients: "Cadastro de paciente", professionals: "Profissionais", anamnese: "Nova anamnese", assignments: "Encaminhamentos", "my-cases": "Meus atendimentos", agenda: "Minha agenda", "case-detail": "Acompanhamento do caso", reports: "Relatório integrado" };
+  const labels = { dashboard: "Visão geral", patients: "Cadastro de paciente", professionals: "Profissionais", accesses: "Usuários e ações", anamnese: "Nova anamnese", assignments: "Encaminhamentos", "my-cases": "Meus atendimentos", agenda: "Minha agenda", "case-detail": "Acompanhamento do caso", reports: "Relatório integrado" };
   return labels[ui.view] || "Painel";
 }
 
@@ -464,32 +474,59 @@ function professionalCaseRow(patient, professional) {
 
 function professionalsView() {
   return `
-    ${sectionHeading("Profissionais", "Cadastre e mantenha atualizada a equipe multidisciplinar. Clique em um profissional para ver e editar os dados e o acesso.", `<button class="button" type="button" data-scroll-add>+ Cadastrar profissional</button>`)}
-    ${accessCard()}
+    ${sectionHeading("Profissionais", "Cadastre e mantenha atualizada a equipe multidisciplinar. Os logins e as permissões ficam em Usuários e ações.", `<button class="button" type="button" data-scroll-add>+ Cadastrar profissional</button>`)}
     <div class="split-layout">
-      <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Equipe cadastrada</h2><span class="cell-muted">${state.professionals.length} profissionais</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Profissional</th><th>Especialidade</th><th>Código/registro</th><th></th></tr></thead><tbody>${state.professionals.map((professional) => `<tr class="is-clickable ${professional.id === ui.editProfessionalId ? "is-selected" : ""}" tabindex="0" data-edit-professional="${professional.id}" aria-label="Ver e editar ${escapeHTML(professional.name)}"><td><div class="person-cell"><span class="mini-avatar">${initials(professional.name)}</span><div><strong>${escapeHTML(professional.name)}</strong>${professional.focus ? `<small class="cell-muted">${escapeHTML(professional.focus)}</small>` : ""}<small class="access-line">${accountOf(professional.id) ? `Usuário: ${escapeHTML(accountOf(professional.id).username)}` : "Sem acesso"}</small></div></div></td><td>${escapeHTML(professional.specialty)}</td><td class="cell-muted">${escapeHTML(professional.code || "Registro a informar")}</td><td><div class="table-actions"><button class="button danger small" type="button" data-delete-professional="${professional.id}">Remover</button></div></td></tr>`).join("") || `<tr><td colspan="4">${emptyInline("Nenhum profissional cadastrado.")}</td></tr>`}</tbody></table></div></article>
+      <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Equipe cadastrada</h2><span class="cell-muted">${state.professionals.length} profissionais</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Profissional</th><th>Especialidade</th><th>Código/registro</th><th></th></tr></thead><tbody>${state.professionals.map((professional) => { const account = accountOf(professional.id); return `<tr class="is-clickable ${professional.id === ui.editProfessionalId ? "is-selected" : ""}" tabindex="0" data-edit-professional="${professional.id}" aria-label="Ver e editar ${escapeHTML(professional.name)}"><td><div class="person-cell"><span class="mini-avatar">${initials(professional.name)}</span><div><strong>${escapeHTML(professional.name)}</strong>${professional.focus ? `<small class="cell-muted">${escapeHTML(professional.focus)}</small>` : ""}<small class="access-line">${account ? `Usuário: @${escapeHTML(account.username)}${account.active ? "" : " · desativado"}` : "Sem acesso — configure em Usuários e ações"}</small></div></div></td><td>${escapeHTML(professional.specialty)}</td><td class="cell-muted">${escapeHTML(professional.code || "Registro a informar")}</td><td><div class="table-actions"><button class="button danger small" type="button" data-delete-professional="${professional.id}">Remover</button></div></td></tr>`; }).join("") || `<tr><td colspan="4">${emptyInline("Nenhum profissional cadastrado.")}</td></tr>`}</tbody></table></div></article>
       <aside class="panel form-card" id="add-professional">${professionalFormCard()}</aside>
     </div>`;
 }
 
 function professionalFormCard() {
   const professional = getProfessional(ui.editProfessionalId);
-  if (!professional) return `<h2>Novo profissional</h2><p>Ao salvar, o sistema gera automaticamente um usuário e uma senha para o profissional acessar a própria conta.</p><form id="professional-form"><div class="form-grid"><div class="field full"><label for="professional-name">Nome completo</label><input id="professional-name" name="name" required placeholder="Nome do profissional" /></div><div class="field"><label for="professional-specialty">Especialidade</label><select id="professional-specialty" name="specialty" required><option value="" selected disabled>Selecione</option>${SPECIALTIES.map((item) => `<option>${item}</option>`).join("")}</select></div><div class="field"><label for="professional-code">Código ou registro</label><input id="professional-code" name="code" required placeholder="Ex.: CRP 00/00000" /></div></div><div class="form-actions"><button class="button" type="submit">Salvar profissional</button></div></form>`;
-  const account = accountOf(professional.id);
-  const passwordHint = account ? (account.password ? "" : "Senha anterior não pode ser consultada. Defina uma nova para alterá-la.") : "Preencha usuário e senha para liberar o acesso deste profissional.";
-  return `<h2>${escapeHTML(professional.name)}</h2><p>Dados e acesso do profissional. Somente a administração vê esta área.</p>
+  if (!professional) return `<h2>Novo profissional</h2><p>Depois de salvar os dados, gere o acesso e defina as ações permitidas em Usuários e ações.</p><form id="professional-form"><div class="form-grid"><div class="field full"><label for="professional-name">Nome completo</label><input id="professional-name" name="name" required placeholder="Nome do profissional" /></div><div class="field"><label for="professional-specialty">Especialidade</label><select id="professional-specialty" name="specialty" required><option value="" selected disabled>Selecione</option>${SPECIALTIES.map((item) => `<option>${item}</option>`).join("")}</select></div><div class="field"><label for="professional-code">Código ou registro</label><input id="professional-code" name="code" required placeholder="Ex.: CRP 00/00000" /></div></div><div class="form-actions"><button class="button" type="submit">Salvar profissional</button></div></form>`;
+  return `<h2>${escapeHTML(professional.name)}</h2><p>Edite os dados profissionais. O acesso, a senha e as ações permitidas são controlados separadamente.</p>
     <form id="professional-edit-form"><div class="form-grid">
       <div class="field full"><label for="edit-name">Nome completo</label><input id="edit-name" name="name" required value="${escapeHTML(professional.name)}" /></div>
       <div class="field"><label for="edit-specialty">Especialidade</label><select id="edit-specialty" name="specialty" required>${SPECIALTIES.map((item) => `<option ${item === professional.specialty ? "selected" : ""}>${item}</option>`).join("")}</select></div>
       <div class="field"><label for="edit-code">Código ou registro</label><input id="edit-code" name="code" value="${escapeHTML(professional.code || "")}" placeholder="Ex.: CRP 00/00000" /></div>
       <div class="field full"><label for="edit-focus">Áreas de atuação</label><textarea id="edit-focus" name="focus" rows="3" placeholder="Resumo da atuação do profissional">${escapeHTML(professional.focus || "")}</textarea></div>
     </div>
-    <div class="form-section access-edit"><h3>Acesso ao sistema</h3><div class="form-grid">
-      <div class="field full"><label for="edit-username">Usuário</label><input id="edit-username" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" value="${escapeHTML(account?.username || "")}" placeholder="nome.sobrenome" /></div>
-      <div class="field full"><label for="edit-password">Senha</label><input id="edit-password" name="password" type="password" autocomplete="off" value="${escapeHTML(account?.password || "")}" placeholder="${account ? "Defina uma nova senha" : "Senha de acesso"}" />${passwordHint ? `<small class="cell-muted">${passwordHint}</small>` : ""}</div>
+    <div class="form-actions"><button class="button secondary" type="button" data-cancel-edit>Cancelar</button><button class="button" type="submit">Salvar alterações</button></div></form><p class="cell-muted" style="margin-top:14px">Para configurar o login ou as ações deste profissional, abra <button class="text-action" type="button" data-nav="accesses">Usuários e ações</button>.</p>`;
+}
+
+function accountDisplayName(account) {
+  if (account.role === "admin") return "Usuário administrativo";
+  return getProfessional(account.professionalId)?.name || "Profissional não encontrado";
+}
+
+function accessesView() {
+  const pending = state.professionals.filter((professional) => !accountOf(professional.id));
+  return `
+    ${sectionHeading("Usuários e ações", "Crie logins, redefina senhas, desative acessos e defina o que cada profissional pode fazer no painel.", `<button class="button" type="button" data-new-access>+ Novo usuário</button>`)}
+    ${accessCard()}
+    <div class="split-layout">
+      <article class="panel content-panel"><div class="panel-header" style="padding:0 0 17px"><h2>Usuários cadastrados</h2><span class="cell-muted">${state.accounts.length} acesso${state.accounts.length === 1 ? "" : "s"}</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Usuário</th><th>Tipo</th><th>Vínculo</th><th>Status</th><th></th></tr></thead><tbody>${state.accounts.map((account) => `<tr><td><strong>@${escapeHTML(account.username)}</strong></td><td>${account.role === "admin" ? "Administrativo" : "Profissional"}</td><td>${escapeHTML(accountDisplayName(account))}</td><td><span class="access-status ${account.active ? "active" : "inactive"}">${account.active ? "Ativo" : "Desativado"}</span></td><td><button class="button secondary small" type="button" data-edit-account="${account.userId}">Ajustar</button></td></tr>`).join("") || `<tr><td colspan="5">${emptyInline("Nenhum acesso cadastrado.")}</td></tr>`}</tbody></table></div>${pending.length ? `<div class="pending-access"><strong>${pending.length} profissional${pending.length === 1 ? "" : "is"} sem acesso</strong><span>${pending.map((professional) => escapeHTML(professional.name)).join(" · ")}</span></div>` : ""}</article>
+      <aside class="panel form-card" id="access-form-card">${accessFormCard()}</aside>
+    </div>`;
+}
+
+function accessFormCard() {
+  const account = state.accounts.find((item) => item.userId === ui.editAccountId);
+  const role = account?.role || "professional";
+  const permissions = permissionsOf(account?.permissions);
+  const ownAccount = account?.userId === ui.account?.userId;
+  const professionals = state.professionals.filter((professional) => !accountOf(professional.id) || professional.id === account?.professionalId);
+  return `<h2>${account ? `Ajustar @${escapeHTML(account.username)}` : "Novo usuário"}</h2><p>${account ? "Altere o status, o nome de usuário, as permissões ou gere uma nova senha. A senha atual não é exibida nem armazenada no painel." : "Crie um login administrativo ou vincule um profissional já cadastrado."}</p>
+    <form id="access-form"><div class="form-grid">
+      <div class="field full"><label for="access-role">Tipo de acesso</label><select id="access-role" name="role" data-access-role ${ownAccount ? "disabled" : ""}><option value="professional" ${role === "professional" ? "selected" : ""}>Profissional</option><option value="admin" ${role === "admin" ? "selected" : ""}>Administrativo</option></select></div>
+      <div class="field full" id="access-professional-field"><label for="access-professional">Profissional vinculado</label><select id="access-professional" name="professionalId"><option value="">Selecione o profissional</option>${professionals.map((professional) => `<option value="${professional.id}" ${professional.id === account?.professionalId ? "selected" : ""}>${escapeHTML(professional.name)} · ${escapeHTML(professional.specialty)}</option>`).join("")}</select><small class="cell-muted">Para a Dra. Vânia ter um acesso profissional, cadastre ou selecione o perfil profissional dela aqui; o administrativo deve permanecer como outro usuário.</small></div>
+      <div class="field full"><label for="access-username">Usuário</label><input id="access-username" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" value="${escapeHTML(account?.username || "")}" placeholder="Ex.: dra.vania ou @admin.clinica" required /></div>
+      <div class="field full"><label for="access-password">${account ? "Nova senha (opcional)" : "Senha"}</label><input id="access-password" name="password" type="password" autocomplete="new-password" placeholder="${account ? "Deixe em branco para manter a senha atual" : "Mínimo de 8 caracteres"}" ${account ? "" : "required"} /><small class="cell-muted">A senha só será exibida nesta tela depois de salvar uma nova. Ela não fica disponível para consulta.</small></div>
     </div>
-    <div class="access-tools"><button class="button secondary small" type="button" data-toggle-password>Mostrar senha</button><button class="button secondary small" type="button" data-generate-password>Gerar nova senha</button><button class="button secondary small" type="button" data-copy-credentials>Copiar acesso</button></div></div>
-    <div class="form-actions"><button class="button secondary" type="button" data-cancel-edit>Cancelar</button><button class="button" type="submit">Salvar alterações</button></div></form>`;
+    <div class="access-tools"><button class="button secondary small" type="button" data-generate-access-password>Gerar senha segura</button><button class="button secondary small" type="button" data-toggle-access-password>Mostrar senha</button></div>
+    <section class="form-section" id="access-permissions"><div class="form-section-title"><div><h3>Ações permitidas</h3><p>Administradores têm todas as ações. Para profissionais, escolha o que ficará disponível no painel.</p></div></div>${PERMISSION_DEFINITIONS.map(([key, label, help]) => `<label class="permission-option"><input type="checkbox" name="permission" value="${key}" ${permissions[key] ? "checked" : ""} ${role === "admin" ? "disabled" : ""}/><span><strong>${label}</strong><small>${help}</small></span></label>`).join("")}</section>
+    <label class="toggle-option"><input type="checkbox" name="active" ${account?.active !== false ? "checked" : ""} ${ownAccount ? "disabled" : ""}/><span><strong>Acesso ativo</strong><small>${ownAccount ? "Seu próprio acesso administrativo não pode ser desativado por aqui." : "Desative para bloquear a entrada sem apagar o histórico clínico."}</small></span></label>
+    <div class="form-actions">${account ? `<button class="button secondary" type="button" data-cancel-account>Cancelar</button>` : ""}<button class="button" type="submit">${account ? "Salvar ajustes" : "Criar usuário"}</button></div></form>`;
 }
 
 function guardianFields(guardian = {}) {
@@ -515,11 +552,11 @@ function anamneseView() {
   const from = state.patients.find((patient) => patient.id === ui.anamneseFromId) || null;
   const options = [...state.patients].sort((x, y) => x.name.localeCompare(y.name, "pt-BR")).map((patient) => `<option value="${patient.id}" ${patient.id === from?.id ? "selected" : ""}>${escapeHTML(patient.name)}${patient.birthDate ? ` · ${ageFromDate(patient.birthDate)}` : ""}</option>`).join("");
   return `
-    ${sectionHeading("Nova ficha de anamnese", "")}
+    ${sectionHeading("Nova ficha de anamnese", ui.role === "admin" ? "Registre a entrada do paciente e encaminhe a equipe responsável." : "Registre a entrada do paciente. A administração receberá o cadastro para fazer os encaminhamentos.")}
     <div class="split-layout">
       <form class="panel form-card" id="anamnese-form">
         <h2>Dados de entrada</h2>
-        <section class="form-section prefill-box"><div class="form-section-title"><div><h3>Paciente já cadastrado?</h3><p>${state.patients.length ? "Escolha o paciente para preencher a ficha com os dados do cadastro." : "Ainda não há pacientes cadastrados. Preencha a ficha abaixo para cadastrar um novo."}</p></div></div><div class="prefill-row"><select id="prefill-patient" aria-label="Paciente já cadastrado" ${state.patients.length ? "" : "disabled"}><option value="">Novo paciente (preencher do zero)</option>${options}</select></div>${from ? `<p class="prefill-note">Dados de <strong>${escapeHTML(from.name)}</strong> carregados do cadastro. Ao salvar, o cadastro é atualizado com o que estiver nesta ficha.</p>` : ""}</section>
+        ${ui.role === "admin" ? `<section class="form-section prefill-box"><div class="form-section-title"><div><h3>Paciente já cadastrado?</h3><p>${state.patients.length ? "Escolha o paciente para preencher a ficha com os dados do cadastro." : "Ainda não há pacientes cadastrados. Preencha a ficha abaixo para cadastrar um novo."}</p></div></div><div class="prefill-row"><select id="prefill-patient" aria-label="Paciente já cadastrado" ${state.patients.length ? "" : "disabled"}><option value="">Novo paciente (preencher do zero)</option>${options}</select></div>${from ? `<p class="prefill-note">Dados de <strong>${escapeHTML(from.name)}</strong> carregados do cadastro. Ao salvar, o cadastro é atualizado com o que estiver nesta ficha.</p>` : ""}</section>` : ""}
         ${patientFormSections(from)}
         <div class="form-actions"><button class="button secondary" type="reset">${from ? "Desfazer alterações" : "Limpar"}</button><button class="button" type="submit">Salvar e selecionar profissionais →</button></div>
       </form>
@@ -566,7 +603,7 @@ function assignmentsView() {
     ${sectionHeading("Encaminhar profissionais", "Selecione a equipe que acompanhará este caso individualmente.")}
     <div class="split-layout">
       <article class="panel form-card">
-        ${patient ? `<div class="assignment-patient"><span class="case-avatar">${initials(patient.name)}</span><div><h3>${escapeHTML(patient.name)}</h3><span>${ageFromDate(patient.birthDate)} · Anamnese criada em ${dateLabel(patient.createdAt)}</span></div>${statusTag(patient.status)}</div>` : `<div class="empty-state"><div class="empty-icon">◎</div><h2>Nenhuma ficha selecionada</h2><p>Crie uma anamnese antes de fazer um encaminhamento.</p><button class="button" type="button" data-nav="anamnese">Iniciar anamnese</button></div>`}
+        ${patient ? `<div class="assignment-patient"><span class="case-avatar">${initials(patient.name)}</span><div><h3>${escapeHTML(patient.name)}</h3><span>${ageFromDate(patient.birthDate)} · Anamnese criada em ${dateLabel(patient.createdAt)} · ${escapeHTML(patient.createdBy || "Cadastro anterior")}</span></div>${statusTag(patient.status)}</div>` : `<div class="empty-state"><div class="empty-icon">◎</div><h2>Nenhuma ficha selecionada</h2><p>Crie uma anamnese antes de fazer um encaminhamento.</p><button class="button" type="button" data-nav="anamnese">Iniciar anamnese</button></div>`}
         ${patient ? `<section class="form-section"><div class="form-section-title"><div><h3>Equipe multidisciplinar</h3><p>Clique nos profissionais que participarão da investigação e do plano de cuidado.</p></div></div><div class="specialty-filter">${["Todas", ...SPECIALTIES.filter((specialty) => state.professionals.some((item) => item.specialty === specialty))].map((specialty) => `<button type="button" class="filter-chip ${ui.filterSpecialty === specialty ? "active" : ""}" data-filter-specialty="${escapeHTML(specialty)}">${escapeHTML(specialty)}</button>`).join("")}</div><div class="professional-options">${listed.map((professional) => `<label class="professional-option ${assignedIds.has(professional.id) ? "selected" : ""}"><input type="checkbox" name="assigned-professional" value="${professional.id}" ${assignedIds.has(professional.id) ? "checked" : ""}/><span class="mini-avatar">${initials(professional.name)}</span><span><strong>${escapeHTML(professional.name)}</strong><span>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.code)}</span></span><span class="choice-check">${assignedIds.has(professional.id) ? "✓" : ""}</span></label>`).join("") || emptyInline("Não há profissionais nesta especialidade.")}</div></section>${scheduleSection(patient, selectedProfessionals)}<div class="form-actions"><button class="button secondary" type="button" data-nav="anamnese">← Voltar</button><button class="button" id="save-assignment" type="button">Salvar encaminhamento</button></div>` : ""}
       </article>
       <aside class="panel assignment-summary"><h2>Profissionais selecionados</h2><p>Os selecionados receberão uma notificação em seu painel.</p><div class="selection-list" id="selection-list">${assignedSummary(selectedProfessionals)}</div>${patient ? bookedSummary(patient) : ""}<button class="button secondary wide-action" type="button" data-nav="reports">Visualizar relatório integrado</button></aside>
@@ -603,16 +640,23 @@ function schedulerCard(professional, patient) {
 
 function myCasesView() {
   const professional = getProfessional(ui.professionalId) || state.professionals[0];
-  const cases = state.patients.filter((patient) => patient.assignedIds.includes(professional?.id));
+  const cases = state.patients.filter((patient) => patient.assignedIds.includes(professional?.id) || patient.createdByUserId === ui.account?.userId);
   return `
-    ${sectionHeading("Meus atendimentos", "Casos em que você foi selecionado pela administração.")}
-    <section class="case-grid">${cases.map((patient) => { const report = patientReports(patient.id)[professional.id]; const sessions = patientSessions(patient.id, professional.id); return `<article class="case-card"><div class="case-card-head"><span class="case-avatar">${initials(patient.name)}</span>${statusTag(report?.result ? "Relatório pronto" : "Em acompanhamento")}</div><h2>${escapeHTML(patient.name)}</h2><span class="case-meta">${ageFromDate(patient.birthDate)} · ${escapeHTML(patient.gender)}</span><div class="case-card-footer"><span>${sessions.length} atendimento${sessions.length === 1 ? "" : "s"} registrado${sessions.length === 1 ? "" : "s"}</span><button class="button small" type="button" data-open-case="${patient.id}">Abrir caso</button></div></article>`; }).join("") || `<article class="panel">${emptyState("Nenhum caso atribuído", "Quando a administração selecionar este profissional, os novos pacientes aparecerão aqui.")}</article>`}</section>`;
+    ${sectionHeading("Meus atendimentos", "Casos encaminhados para você e cadastros iniciais que você preencheu.")}
+    <section class="case-grid">${cases.map((patient) => { const assigned = patient.assignedIds.includes(professional?.id); const report = patientReports(patient.id)[professional?.id]; const sessions = patientSessions(patient.id, professional?.id); const status = assigned ? (report?.result ? "Relatório pronto" : "Em acompanhamento") : "Aguardando encaminhamento"; return `<article class="case-card"><div class="case-card-head"><span class="case-avatar">${initials(patient.name)}</span>${statusTag(status)}</div><h2>${escapeHTML(patient.name)}</h2><span class="case-meta">${ageFromDate(patient.birthDate)} · ${escapeHTML(patient.gender)}</span><small class="cell-muted">${assigned ? `${sessions.length} atendimento${sessions.length === 1 ? "" : "s"} registrado${sessions.length === 1 ? "" : "s"}` : "Cadastro iniciado por você · aguardando ação administrativa"}</small><div class="case-card-footer"><span>${escapeHTML(patient.createdBy || "Cadastro anterior")}</span><button class="button small" type="button" data-open-case="${patient.id}">Abrir caso</button></div></article>`; }).join("") || `<article class="panel">${emptyState("Nenhum caso disponível", "Quando a administração selecionar este profissional, os novos atendimentos aparecerão aqui.")}</article>`}</section>`;
 }
 
 function caseDetailView() {
   const patient = getPatient();
   const professional = getProfessional(ui.professionalId);
-  if (!patient || !professional || !patient.assignedIds.includes(professional.id)) { ui.view = "my-cases"; return myCasesView(); }
+  const assigned = Boolean(patient && professional && patient.assignedIds.includes(professional.id));
+  const isAuthor = patient?.createdByUserId === ui.account?.userId;
+  if (!patient || !professional || (!assigned && !isAuthor)) { ui.view = "my-cases"; return myCasesView(); }
+  if (!assigned) return `
+    <button class="text-action" type="button" data-nav="my-cases" style="margin-bottom:12px">← Voltar aos atendimentos</button>
+    <section class="case-header"><span class="case-avatar">${initials(patient.name)}</span><div><h2>${escapeHTML(patient.name)}</h2><p>${ageFromDate(patient.birthDate)} · Cadastro inicial criado por você</p></div><div class="case-header-actions">${statusTag("Aguardando encaminhamento")}</div></section>
+    <article class="panel content-panel"><h2 style="margin-top:0">Cadastro enviado para a administração</h2><p class="cell-muted">A ficha já está salva. A equipe administrativa fará o encaminhamento antes que o acompanhamento clínico seja iniciado.</p></article>
+    ${anamneseReadOnly(patient)}`;
   const report = patientReports(patient.id)[professional.id] || { complaint: "", plan: "", result: "" };
   const sessions = patientSessions(patient.id, professional.id);
   return `
@@ -623,6 +667,7 @@ function caseDetailView() {
 }
 
 function professionalRecordForm(patient, professional, report) {
+  if (!can("registrar_evolucao")) return `<article class="panel content-panel"><h2>Registro profissional indisponível</h2><p class="cell-muted">A administração ainda não liberou a ação de registrar evoluções para este acesso.</p></article>`;
   return `<div class="split-layout"><form id="professional-record-form" class="panel form-card"><h2>Seu registro clínico · ${escapeHTML(periodTitle(currentPeriod()))}</h2><p>Preencha aos poucos. Este registro vale para o mês atual e fecha em ${shortDate(periodEnd(currentPeriod()))}; depois disso ele fica só para leitura e um novo mês começa em branco.</p><section class="form-section"><div class="form-section-title"><div><h3>Queixa principal</h3><p>Seu olhar profissional sobre a demanda apresentada.</p></div></div><div class="field"><textarea name="complaint" placeholder="Descreva a queixa principal observada em sua área de atuação.">${escapeHTML(report.complaint)}</textarea></div></section><section class="form-section"><div class="form-section-title"><div><h3>Plano de ação</h3><p>Estratégias, avaliação e ações planejadas.</p></div></div><div class="field"><textarea name="plan" placeholder="Descreva os objetivos e as ações propostas.">${escapeHTML(report.plan)}</textarea></div></section><section class="form-section"><div class="form-section-title"><div><h3>Resultado e evolução</h3><p>Registre avanços, observações e resultados parciais.</p></div></div><div class="field"><textarea name="result" placeholder="Descreva a evolução observada durante o acompanhamento.">${escapeHTML(report.result)}</textarea></div></section><div class="form-actions"><span class="cell-muted">${report.updatedAt ? `Atualizado em ${dateLabel(report.updatedAt)}` : "Ainda não salvo"}</span><button class="button" type="submit">Salvar evolução</button></div></form><aside class="panel side-note"><h2>Contexto do caso</h2><p>Informações compartilhadas pela administração na anamnese.</p><div class="step-list"><div class="step active"><span class="step-number">✓</span>Queixa familiar registrada</div><div class="step"><span class="step-number">${patient.diagnosis.has ? "✓" : "—"}</span>${patient.diagnosis.has ? `Documento: ${escapeHTML(patient.diagnosis.fileName || "anexado")}` : "Sem documento diagnóstico"}</div><div class="step"><span class="step-number">${patient.hypothesis.has ? "✓" : "—"}</span>${patient.hypothesis.has ? "Hipótese registrada" : "Sem hipótese relatada"}</div></div><hr /><small><strong>Queixa da família:</strong><br>${escapeHTML(patient.familyComplaint)}</small>${previousMonths(patient, professional)}</aside></div>`;
 }
 
@@ -634,11 +679,11 @@ function previousMonths(patient, professional) {
 }
 
 function anamneseReadOnly(patient) {
-  return `<section class="panel content-panel"><div class="panel-header" style="padding:0 0 15px"><h2>Ficha de anamnese</h2><span class="cell-muted">Preenchida pela administração</span></div><div class="report-section" style="margin-top:0"><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Data de nascimento</td><td>${dateLabel(patient.birthDate)} (${ageFromDate(patient.birthDate)})</td></tr><tr><td>Responsáveis</td><td colspan="3">${patient.guardians.map((guardian) => `${escapeHTML(guardian.relation || "Responsável")}: ${escapeHTML(guardian.name)} · ${escapeHTML(guardian.phone)}`).join("<br>")}</td></tr><tr><td>Hipótese</td><td colspan="3">${patient.hypothesis.has ? escapeHTML(patient.hypothesis.narrative) : "Não relatada"}</td></tr><tr><td>Diagnóstico</td><td colspan="3">${patient.diagnosis.has ? `Documento anexado: ${escapeHTML(patient.diagnosis.fileName || "arquivo")}` : "Não informado"}</td></tr><tr><td>Queixa familiar</td><td colspan="3">${escapeHTML(patient.familyComplaint)}</td></tr></tbody></table></div></section>`;
+  return `<section class="panel content-panel"><div class="panel-header" style="padding:0 0 15px"><h2>Ficha de anamnese</h2><span class="cell-muted">Cadastro por ${escapeHTML(patient.createdBy || "Cadastro anterior")}</span></div><div class="report-section" style="margin-top:0"><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Data de nascimento</td><td>${dateLabel(patient.birthDate)} (${ageFromDate(patient.birthDate)})</td></tr><tr><td>Responsáveis</td><td colspan="3">${patient.guardians.map((guardian) => `${escapeHTML(guardian.relation || "Responsável")}: ${escapeHTML(guardian.name)} · ${escapeHTML(guardian.phone)}`).join("<br>")}</td></tr><tr><td>Hipótese</td><td colspan="3">${patient.hypothesis.has ? escapeHTML(patient.hypothesis.narrative) : "Não relatada"}</td></tr><tr><td>Diagnóstico</td><td colspan="3">${patient.diagnosis.has ? `Documento anexado: ${escapeHTML(patient.diagnosis.fileName || "arquivo")}` : "Não informado"}</td></tr><tr><td>Queixa familiar</td><td colspan="3">${escapeHTML(patient.familyComplaint)}</td></tr></tbody></table></div></section>`;
 }
 
 function scheduleView(patient, professional, sessions) {
-  return `<div class="split-layout"><article class="panel form-card"><h2>Agenda de atendimentos</h2><p>Registre as sessões previstas e acompanhe o que já foi realizado.</p><div class="session-list">${sessions.map((session) => `<div class="session-item"><span class="session-calendar"><b>${new Date(`${session.date}T12:00:00`).getDate().toString().padStart(2, "0")}</b>${new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(`${session.date}T12:00:00`)).replace(".", "")}</span><div><strong>${escapeHTML(session.objective)}</strong><span>${dateLabel(session.date)}${session.time ? ` · ${escapeHTML(session.time)}` : ""}</span></div><span class="session-status">${statusTag(session.status)}</span></div>`).join("") || emptyInline("Nenhuma sessão registrada ainda.")}</div></article><form class="panel form-card" id="session-form"><h2>Adicionar sessão</h2><p>Crie um lembrete para o próximo atendimento.</p><div class="form-grid"><div class="field"><label for="session-date">Data</label><input id="session-date" name="date" type="date" required /></div><div class="field"><label for="session-time">Horário</label><select id="session-time" name="time">${SLOTS.map((time) => `<option>${time}</option>`).join("")}</select></div><div class="field"><label for="session-status">Status</label><select id="session-status" name="status"><option>Agendada</option><option>Realizada</option></select></div><div class="field full"><label for="session-objective">Objetivo ou observação</label><input id="session-objective" name="objective" required placeholder="Ex.: Entrevista inicial com responsáveis" /></div></div><div class="form-actions"><button class="button" type="submit">Adicionar à agenda</button></div></form></div>`;
+  return `<div class="split-layout"><article class="panel form-card"><h2>Agenda de atendimentos</h2><p>Registre as sessões previstas e acompanhe o que já foi realizado.</p><div class="session-list">${sessions.map((session) => `<div class="session-item"><span class="session-calendar"><b>${new Date(`${session.date}T12:00:00`).getDate().toString().padStart(2, "0")}</b>${new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(`${session.date}T12:00:00`)).replace(".", "")}</span><div><strong>${escapeHTML(session.objective)}</strong><span>${dateLabel(session.date)}${session.time ? ` · ${escapeHTML(session.time)}` : ""}</span></div><span class="session-status">${statusTag(session.status)}</span></div>`).join("") || emptyInline("Nenhuma sessão registrada ainda.")}</div></article>${can("gerenciar_agenda") ? `<form class="panel form-card" id="session-form"><h2>Adicionar sessão</h2><p>Crie um lembrete para o próximo atendimento.</p><div class="form-grid"><div class="field"><label for="session-date">Data</label><input id="session-date" name="date" type="date" required /></div><div class="field"><label for="session-time">Horário</label><select id="session-time" name="time">${SLOTS.map((time) => `<option>${time}</option>`).join("")}</select></div><div class="field"><label for="session-status">Status</label><select id="session-status" name="status"><option>Agendada</option><option>Realizada</option></select></div><div class="field full"><label for="session-objective">Objetivo ou observação</label><input id="session-objective" name="objective" required placeholder="Ex.: Entrevista inicial com responsáveis" /></div></div><div class="form-actions"><button class="button" type="submit">Adicionar à agenda</button></div></form>` : `<aside class="panel form-card"><h2>Agenda somente leitura</h2><p class="cell-muted">A administração não liberou a gestão de agenda para este acesso.</p></aside>`}</div>`;
 }
 
 function reportPeriodOf(patient) {
@@ -681,10 +726,13 @@ function emptyState(title, text, buttonLabel = "", target = "") { return `<div c
 function viewTemplate() {
   if (!ui.role) return loginTemplate();
   if (ui.role !== "admin" && ADMIN_VIEWS.includes(ui.view)) ui.view = "dashboard";
+  if (ui.role !== "admin" && ui.view === "anamnese" && !can("criar_anamnese")) ui.view = "dashboard";
+  if (ui.role !== "admin" && ui.view === "agenda" && !can("gerenciar_agenda")) ui.view = "dashboard";
   if (ui.role === "admin" && ui.view === "agenda") ui.view = "dashboard";
   let content;
   if (ui.view === "patients") content = patientsView();
   else if (ui.view === "professionals") content = professionalsView();
+  else if (ui.view === "accesses") content = accessesView();
   else if (ui.view === "anamnese") content = anamneseView();
   else if (ui.view === "assignments") content = assignmentsView();
   else if (ui.view === "my-cases") content = myCasesView();
@@ -713,14 +761,19 @@ function bindEvents() {
     row.addEventListener("keydown", (event) => { if (event.key === "Enter" && event.target === row) open(); });
   });
   document.querySelector("[data-cancel-edit]")?.addEventListener("click", () => { ui.editProfessionalId = null; render(); });
-  document.querySelector("[data-toggle-password]")?.addEventListener("click", (event) => { const input = document.querySelector("#edit-password"); const show = input.type === "password"; input.type = show ? "text" : "password"; event.currentTarget.textContent = show ? "Ocultar senha" : "Mostrar senha"; });
-  document.querySelector("[data-generate-password]")?.addEventListener("click", () => { const input = document.querySelector("#edit-password"); input.value = generatePassword(); input.type = "text"; document.querySelector("[data-toggle-password]").textContent = "Ocultar senha"; toast("Nova senha gerada. Clique em Salvar alterações para aplicar."); });
-  document.querySelector("[data-copy-credentials]")?.addEventListener("click", () => { const user = document.querySelector("#edit-username").value, pass = document.querySelector("#edit-password").value; if (!user || !pass) return toast("Preencha usuário e senha antes de copiar.", true); navigator.clipboard?.writeText(`Usuário: ${user}\nSenha: ${pass}`).then(() => toast("Acesso copiado."), () => toast("Não foi possível copiar. Selecione e copie manualmente.", true)); });
   document.querySelector("#professional-edit-form")?.addEventListener("submit", submitProfessionalEdit);
   document.querySelector("[data-copy-access]")?.addEventListener("click", copyAccess);
   document.querySelector("[data-dismiss-access]")?.addEventListener("click", () => { ui.newAccess = null; render(); });
   document.querySelectorAll("[data-delete-professional]").forEach((button) => button.addEventListener("click", () => deleteProfessional(button.dataset.deleteProfessional)));
   document.querySelectorAll("[data-scroll-add]").forEach((button) => button.addEventListener("click", () => document.querySelector("#add-professional")?.scrollIntoView({ behavior: "smooth" })));
+  document.querySelector("[data-new-access]")?.addEventListener("click", () => { ui.editAccountId = null; ui.newAccess = null; render(); document.querySelector("#access-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" }); });
+  document.querySelectorAll("[data-edit-account]").forEach((button) => button.addEventListener("click", () => { ui.editAccountId = button.dataset.editAccount; ui.newAccess = null; render(); document.querySelector("#access-form-card")?.scrollIntoView({ behavior: "smooth", block: "start" }); }));
+  document.querySelector("[data-cancel-account]")?.addEventListener("click", () => { ui.editAccountId = null; render(); });
+  document.querySelector("[data-toggle-access-password]")?.addEventListener("click", (event) => { const input = document.querySelector("#access-password"); const show = input.type === "password"; input.type = show ? "text" : "password"; event.currentTarget.textContent = show ? "Ocultar senha" : "Mostrar senha"; });
+  document.querySelector("[data-generate-access-password]")?.addEventListener("click", () => { const input = document.querySelector("#access-password"); input.value = generatePassword(14); input.type = "text"; document.querySelector("[data-toggle-access-password]").textContent = "Ocultar senha"; toast("Nova senha segura gerada. Salve os ajustes para aplicá-la."); });
+  document.querySelector("[data-access-role]")?.addEventListener("change", syncAccessRoleFields);
+  syncAccessRoleFields();
+  document.querySelector("#access-form")?.addEventListener("submit", submitAccess);
   document.querySelectorAll("[data-filter-specialty]").forEach((button) => button.addEventListener("click", () => { ui.filterSpecialty = button.dataset.filterSpecialty; render(); }));
   document.querySelectorAll("[data-case-tab]").forEach((button) => button.addEventListener("click", () => { ui.caseTab = button.dataset.caseTab; render(); }));
   document.querySelectorAll("[data-print-report]").forEach((button) => button.addEventListener("click", printReport));
@@ -798,7 +851,7 @@ const accountOf = (professionalId) => state.accounts.find((account) => account.p
 function accessCard() {
   const access = ui.newAccess;
   if (!access) return "";
-  return `<article class="panel content-panel access-card" role="status"><div><h2>Acesso gerado para ${escapeHTML(access.name)}</h2><p class="cell-muted">Entregue estes dados ao profissional. Eles também ficam disponíveis ao clicar no nome dele na equipe.</p><dl class="access-data"><div><dt>Usuário</dt><dd>${escapeHTML(access.username)}</dd></div><div><dt>Senha</dt><dd>${escapeHTML(access.password)}</dd></div></dl></div><div class="table-actions"><button class="button small" type="button" data-copy-access>Copiar</button><button class="button secondary small" type="button" data-dismiss-access>Fechar</button></div></article>`;
+  return `<article class="panel content-panel access-card" role="status"><div><h2>Acesso atualizado para ${escapeHTML(access.name)}</h2><p class="cell-muted">Entregue estes dados pela via segura. Por proteção, esta senha só aparece agora e não fica disponível para consulta depois.</p><dl class="access-data"><div><dt>Usuário</dt><dd>${escapeHTML(access.username)}</dd></div><div><dt>Senha</dt><dd>${escapeHTML(access.password)}</dd></div></dl></div><div class="table-actions"><button class="button small" type="button" data-copy-access>Copiar</button><button class="button secondary small" type="button" data-dismiss-access>Fechar</button></div></article>`;
 }
 
 function copyAccess() {
@@ -807,24 +860,63 @@ function copyAccess() {
   navigator.clipboard?.writeText(`Usuário: ${access.username}\nSenha: ${access.password}`).then(() => toast("Acesso copiado."), () => toast("Não foi possível copiar. Selecione e copie manualmente.", true));
 }
 
+function syncAccessRoleFields() {
+  const role = document.querySelector("[data-access-role]")?.value;
+  const professionalField = document.querySelector("#access-professional-field");
+  const permissionSection = document.querySelector("#access-permissions");
+  if (!role || !professionalField) return;
+  const isAdmin = role === "admin";
+  professionalField.classList.toggle("hidden", isAdmin);
+  permissionSection?.classList.toggle("is-muted", isAdmin);
+  permissionSection?.querySelectorAll('input[name="permission"]').forEach((input) => { input.disabled = isAdmin; });
+}
+
+async function submitAccess(event) {
+  event.preventDefault();
+  if (ui.role !== "admin") return toast("Somente a administração pode gerenciar usuários.", true);
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const account = state.accounts.find((item) => item.userId === ui.editAccountId);
+  const selectedRole = account?.userId === ui.account?.userId ? account.role : data.get("role");
+  const role = selectedRole === "admin" ? "admin" : "professional";
+  const username = normUser(data.get("username"));
+  const password = String(data.get("password") || "");
+  const professionalId = role === "professional" ? String(data.get("professionalId") || "") : null;
+  const active = account?.userId === ui.account?.userId ? true : data.get("active") === "on";
+  const permissions = Object.fromEntries(PERMISSION_DEFINITIONS.map(([key]) => [key, role === "admin" || data.getAll("permission").includes(key)]));
+  if (!USERNAME_PATTERN.test(username)) return toast("O usuário precisa ter 3 ou mais caracteres: letras minúsculas, números, ponto, hífen, sublinhado ou &.", true);
+  if (role === "professional" && !professionalId) return toast("Selecione o profissional que receberá este acesso.", true);
+  if (!account && password.length < 8) return toast("A senha precisa ter pelo menos 8 caracteres.", true);
+  if (account && password && password.length < 8) return toast("A nova senha precisa ter pelo menos 8 caracteres.", true);
+  if (state.accounts.some((item) => item.username === username && item.userId !== account?.userId)) return toast("Este usuário já está em uso.", true);
+  if (role === "professional" && state.accounts.some((item) => item.professionalId === professionalId && item.userId !== account?.userId)) return toast("Este profissional já possui um acesso.", true);
+  const displayName = role === "admin" ? "usuário administrativo" : (getProfessional(professionalId)?.name || "profissional");
+  const saved = await commit(async () => {
+    await must(db.rpc("salvar_usuario", {
+      p_user_id: account?.userId || null,
+      p_usuario: username,
+      p_senha: password || null,
+      p_papel: role === "admin" ? "admin" : "profissional",
+      p_profissional_id: professionalId,
+      p_ativo: active,
+      p_permissoes: permissions,
+    }));
+    ui.editAccountId = null;
+    ui.newAccess = password ? { name: displayName, username: `@${username}`, password } : null;
+  });
+  if (saved) toast(account ? "Ajustes de acesso salvos." : "Novo usuário criado.");
+}
+
 async function submitProfessionalEdit(event) {
   event.preventDefault();
   if (ui.role !== "admin") return toast("Somente a administração pode editar profissionais.", true);
   const professional = getProfessional(ui.editProfessionalId);
   if (!professional) return;
   const data = new FormData(event.currentTarget);
-  const name = data.get("name").trim(), username = normUser(data.get("username")), password = String(data.get("password") || "");
-  const account = accountOf(professional.id);
+  const name = data.get("name").trim();
   if (!name) return toast("Informe o nome do profissional.", true);
-  if (password && !username) return toast("Informe o usuário de acesso.", true);
-  if (username && !/^[a-z0-9._-]{3,}$/.test(username)) return toast("O usuário precisa ter 3 ou mais caracteres: letras minúsculas, números, ponto, hífen ou sublinhado.", true);
-  if (username && state.accounts.some((item) => item.username === username && item !== account)) return toast("Este usuário já está em uso.", true);
-  if (password && password.length < 6) return toast("A senha precisa ter pelo menos 6 caracteres.", true);
-  const keepsAccess = Boolean(account) && username === account.username && (!password || password === account.password);
-  if (username && !password && !keepsAccess) return toast("Defina uma senha para este acesso.", true);
   const saved = await commit(async () => {
     await must(db.from("profissionais").update({ nome: name, especialidade: data.get("specialty"), registro: data.get("code").trim(), atuacao: data.get("focus").trim() }).eq("id", professional.id));
-    if (username && !keepsAccess) await must(db.rpc("salvar_acesso", { p_profissional_id: professional.id, p_usuario: username, p_senha: password }));
     ui.editProfessionalId = null;
   });
   if (saved) toast("Dados do profissional atualizados.");
@@ -835,15 +927,13 @@ async function submitProfessional(event) {
   if (ui.role !== "admin") return toast("Somente a administração pode cadastrar profissionais.", true);
   const data = new FormData(event.currentTarget);
   const professional = { id: uid("prof"), name: data.get("name").trim(), specialty: data.get("specialty"), code: data.get("code").trim() };
-  const username = suggestUsername(professional.name), password = generatePassword();
   const saved = await commit(async () => {
     await must(db.from("profissionais").insert({ id: professional.id, nome: professional.name, especialidade: professional.specialty, registro: professional.code }));
-    await must(db.rpc("salvar_acesso", { p_profissional_id: professional.id, p_usuario: username, p_senha: password }));
-    ui.newAccess = { name: professional.name, username, password };
   });
   if (!saved) return;
-  render(); window.scrollTo({ top: 0, behavior: "smooth" });
-  toast("Profissional cadastrado e acesso gerado.");
+  ui.editAccountId = null;
+  setView("accesses");
+  toast("Profissional cadastrado. Agora crie o acesso e defina as ações permitidas.");
 }
 
 async function deleteProfessional(id) {
@@ -873,18 +963,18 @@ function readPatientForm(form, current = null) {
 
 async function submitAnamnese(event) {
   event.preventDefault();
-  if (ui.role !== "admin") return toast("Somente a administração pode cadastrar pacientes.", true);
-  const from = state.patients.find((patient) => patient.id === ui.anamneseFromId) || null;
+  if (!can("criar_anamnese")) return toast("A administração não liberou a criação de anamnese para este acesso.", true);
+  const from = ui.role === "admin" ? state.patients.find((patient) => patient.id === ui.anamneseFromId) || null : null;
   const fields = readPatientForm(event.currentTarget, from);
   const id = from?.id || uid("case");
   const saved = await commit(async () => {
     if (from) await must(db.from("pacientes").update(fields).eq("id", id));
     else await must(db.from("pacientes").insert({ id, ...fields }));
-    Object.assign(ui, { activeCaseId: id, anamneseFromId: null, filterSpecialty: "Todas", view: "assignments", newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null });
+    Object.assign(ui, { activeCaseId: id, anamneseFromId: null, filterSpecialty: "Todas", view: ui.role === "admin" ? "assignments" : "my-cases", newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null });
   });
   if (!saved) return;
   window.scrollTo({ top: 0, behavior: "smooth" });
-  toast(from ? "Ficha salva e cadastro atualizado. Agora selecione os profissionais." : "Ficha de anamnese salva. Agora selecione os profissionais.");
+  toast(ui.role !== "admin" ? "Ficha de anamnese salva e enviada para o encaminhamento administrativo." : from ? "Ficha salva e cadastro atualizado. Agora selecione os profissionais." : "Ficha de anamnese salva. Agora selecione os profissionais.");
 }
 
 async function submitPatient(event) {
@@ -932,6 +1022,7 @@ async function deleteHistory(id) {
   if (await commit(() => must(db.from("historico_mensal").delete().eq("id", id)))) toast("Registro removido do histórico.");
 }
 
+
 async function saveAssignment() {
   const patient = getPatient();
   if (!patient) return;
@@ -953,7 +1044,7 @@ async function saveAssignment() {
 async function saveUnavailability(event) {
   event.preventDefault();
   const professional = getProfessional(ui.professionalId), date = ui.agenda.date;
-  if (ui.role !== "professional" || !professional || !date) return;
+  if (ui.role !== "professional" || !professional || !date || !can("gerenciar_agenda")) return toast("A administração não liberou a gestão de agenda para este acesso.", true);
   if (date < todayKey()) return toast("Escolha uma data a partir de hoje.", true);
   const data = new FormData(event.currentTarget), allDay = data.get("mode") === "day";
   const start = String(data.get("start") || ""), end = String(data.get("end") || "");
@@ -977,7 +1068,7 @@ async function saveProfessionalRecord(event) {
   event.preventDefault();
   const patient = getPatient();
   const professional = getProfessional(ui.professionalId);
-  if (!patient || !professional) return;
+  if (!patient || !professional || !can("registrar_evolucao")) return toast("A administração não liberou o registro de evolução para este acesso.", true);
   const data = new FormData(event.currentTarget);
   const row = { paciente_id: patient.id, profissional_id: professional.id, periodo: currentPeriod(), queixa: data.get("complaint").trim(), plano: data.get("plan").trim(), resultado: data.get("result").trim(), atualizado_em: clinicToday() };
   if (await commit(() => must(db.from("evolucoes").upsert(row, { onConflict: "paciente_id,profissional_id,periodo" })))) toast("Evolução salva no relatório de " + periodTitle(row.periodo) + ".");
@@ -985,7 +1076,7 @@ async function saveProfessionalRecord(event) {
 
 async function saveSession(event) {
   event.preventDefault();
-  const patient = getPatient(); const professional = getProfessional(ui.professionalId); if (!patient || !professional) return;
+  const patient = getPatient(); const professional = getProfessional(ui.professionalId); if (!patient || !professional || !can("gerenciar_agenda")) return toast("A administração não liberou a gestão de agenda para este acesso.", true);
   const data = new FormData(event.currentTarget);
   const problem = data.get("status") === "Agendada" ? conflictMessage(professional.id, data.get("date"), data.get("time")) : "";
   if (problem) return toast(problem, true);

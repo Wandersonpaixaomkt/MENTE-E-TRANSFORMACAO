@@ -1,7 +1,6 @@
 -- Histórico mensal do paciente e fechamento mensal dos relatórios.
--- Rode uma vez no SQL Editor do Supabase. Mantém todos os dados que já existem:
--- as evoluções atuais passam a pertencer ao mês em que foram atualizadas.
--- Mês de referência = mês no fuso de Belém (Parauapebas-PA). Meses passados ficam somente leitura.
+-- Aplicada em produção em 14/11/2026, depois de 20261113000000_manage_access_and_anamnese.sql (usa tem_permissao).
+-- As evoluções existentes passam a pertencer ao mês em que foram atualizadas. Mês de referência = fuso de Belém; meses passados ficam somente leitura.
 
 begin;
 
@@ -25,8 +24,8 @@ create policy "admin lê evoluções" on public.evolucoes for select to authenti
 create policy "admin grava evoluções do mês aberto" on public.evolucoes for insert to authenticated with check (public.eh_admin() and periodo = public.periodo_atual());
 create policy "admin altera evoluções do mês aberto" on public.evolucoes for update to authenticated using (public.eh_admin() and periodo = public.periodo_atual()) with check (public.eh_admin() and periodo = public.periodo_atual());
 create policy "admin apaga evoluções do mês aberto" on public.evolucoes for delete to authenticated using (public.eh_admin() and periodo = public.periodo_atual());
-create policy "profissional grava a própria evolução do mês aberto" on public.evolucoes for insert to authenticated with check (profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id) and periodo = public.periodo_atual());
-create policy "profissional atualiza a própria evolução do mês aberto" on public.evolucoes for update to authenticated using (profissional_id = public.meu_profissional_id() and periodo = public.periodo_atual()) with check (profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id) and periodo = public.periodo_atual());
+create policy "profissional grava a própria evolução do mês aberto" on public.evolucoes for insert to authenticated with check (public.tem_permissao('registrar_evolucao') and profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id) and periodo = public.periodo_atual());
+create policy "profissional atualiza a própria evolução do mês aberto" on public.evolucoes for update to authenticated using (public.tem_permissao('registrar_evolucao') and profissional_id = public.meu_profissional_id() and periodo = public.periodo_atual()) with check (public.tem_permissao('registrar_evolucao') and profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id) and periodo = public.periodo_atual());
 
 -- Histórico descrito do paciente, mês a mês ---------------------------------------
 
