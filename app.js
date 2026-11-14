@@ -23,6 +23,12 @@ const timeToMin = (time) => { const [h, m] = time.split(":").map(Number); return
 const longDate = (key) => new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${key}T12:00:00`));
 const monthTitle = (month) => new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(new Date(`${month}-01T12:00:00`));
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+/* Meses de referência dos relatórios: sempre no fuso de Belém (Parauapebas-PA), o mesmo usado pelo banco para fechar o mês. */
+const clinicToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Belem" }).format(new Date());
+const currentPeriod = () => clinicToday().slice(0, 7);
+const periodEnd = (period) => { const [y, m] = period.split("-").map(Number); return `${period}-${pad2(new Date(y, m, 0).getDate())}`; };
+const periodTitle = (period) => { const title = monthTitle(period); return title.charAt(0).toUpperCase() + title.slice(1); };
+const shortDate = (key) => key.split("-").reverse().join("/");
 const SESSION_MINUTES = 60;
 const SLOTS = Array.from({ length: 10 }, (_, i) => `${pad2(8 + i)}:00`);
 
@@ -37,10 +43,10 @@ const CLINIC = {
   directorCode: "CRP 10/10102",
 };
 
-const blankState = () => ({ clinic: CLINIC, professionals: [], accounts: [], unavailability: [], patients: [], reports: {}, sessions: {} });
+const blankState = () => ({ clinic: CLINIC, professionals: [], accounts: [], unavailability: [], patients: [], reports: {}, evolutions: {}, history: {}, sessions: {} });
 
 let state = blankState();
-let ui = { role: null, account: null, setup: false, saving: false, newAccess: null, editProfessionalId: null, editPatientId: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null, filterSpecialty: "Todas", caseTab: "registro" };
+let ui = { role: null, account: null, setup: false, saving: false, newAccess: null, editProfessionalId: null, editPatientId: null, anamneseFromId: null, reportPeriod: null, agenda: { month: monthOf(todayKey()), date: null }, sched: {}, draftSessions: [], draftAssigned: null, view: "dashboard", activeCaseId: null, professionalId: null, filterSpecialty: "Todas", caseTab: "registro" };
 
 /* Acesso: login do Supabase Auth. Cada usuário vira um e-mail interno que nunca recebe mensagens.
    Quem pode ver e alterar cada dado é decidido pelas regras de acesso (RLS) do banco. */
@@ -71,16 +77,23 @@ async function loadData() {
     db.from("evolucoes").select("*"),
     db.from("sessoes").select("*").order("data").order("horario"),
     db.from("indisponibilidades").select("*"),
+    db.from("historico_mensal").select("*").order("data").order("criado_em"),
   ]);
   const failed = results.find((result) => result.error);
   if (failed) throw failed.error;
-  const [professionals, profiles, passwords, patients, reports, sessions, unavailability] = results.map((result) => result.data);
+  const [professionals, profiles, passwords, patients, reports, sessions, unavailability, history] = results.map((result) => result.data);
   const passwordOf = Object.fromEntries(passwords.map((row) => [row.user_id, row.senha]));
   const next = blankState();
   next.professionals = professionals.map((row) => ({ id: row.id, name: row.nome, specialty: row.especialidade, code: row.registro, focus: row.atuacao }));
   next.accounts = profiles.map((row) => ({ username: row.usuario, role: row.papel === "admin" ? "admin" : "professional", professionalId: row.profissional_id, password: passwordOf[row.user_id] || "" }));
   next.patients = patients.map((row) => ({ id: row.id, name: row.nome, gender: row.sexo, birthDate: row.nascimento || "", cpf: row.cpf, guardians: row.responsaveis, hypothesis: row.hipotese, diagnosis: row.diagnostico, familyComplaint: row.anamnese, assignedIds: row.profissionais_ids, status: row.status, createdAt: row.criado_em.slice(0, 10) }));
-  reports.forEach((row) => { (next.reports[row.paciente_id] ||= {})[row.profissional_id] = { complaint: row.queixa, plan: row.plano, result: row.resultado, updatedAt: row.atualizado_em }; });
+  const now = currentPeriod();
+  reports.forEach((row) => {
+    const record = { complaint: row.queixa, plan: row.plano, result: row.resultado, updatedAt: row.atualizado_em };
+    ((next.evolutions[row.paciente_id] ||= {})[row.profissional_id] ||= {})[row.periodo] = record;
+    if (row.periodo === now) (next.reports[row.paciente_id] ||= {})[row.profissional_id] = record;
+  });
+  history.forEach((row) => { (next.history[row.paciente_id] ||= []).push({ id: row.id, period: row.periodo, date: row.data, text: row.texto, author: row.autor }); });
   sessions.forEach((row) => { ((next.sessions[row.paciente_id] ||= {})[row.profissional_id] ||= []).push({ id: row.id, date: row.data, time: row.horario, objective: row.objetivo, status: row.status }); });
   next.unavailability = unavailability.map((row) => ({ id: row.id, professionalId: row.profissional_id, date: row.data, allDay: row.dia_todo, start: row.inicio, end: row.fim, note: row.motivo }));
   state = next;
@@ -149,6 +162,22 @@ function getProfessional(id) { return state.professionals.find((professional) =>
 function getAssigned(patient) { return patient ? patient.assignedIds.map(getProfessional).filter(Boolean) : []; }
 function patientReports(patientId) { return state.reports[patientId] || {}; }
 function patientSessions(patientId, professionalId) { return state.sessions[patientId]?.[professionalId] || []; }
+function patientEvolutions(patientId, professionalId) { return state.evolutions[patientId]?.[professionalId] || {}; }
+
+/* Meses do relatório do paciente: do mês do cadastro até o mês atual (o mês atual é o único aberto). */
+function patientPeriods(patient) {
+  const now = currentPeriod();
+  const used = [...(state.history[patient.id] || []).map((entry) => entry.period), ...Object.values(state.evolutions[patient.id] || {}).flatMap((byPeriod) => Object.keys(byPeriod))];
+  let period = [monthOf(patient.createdAt || clinicToday()), ...used].sort()[0];
+  const periods = [];
+  while (period <= now) { periods.push(period); period = shiftMonth(period, 1); }
+  return periods;
+}
+
+function periodRange(patient, period) {
+  return { start: patient.createdAt && monthOf(patient.createdAt) === period ? patient.createdAt : `${period}-01`, end: periodEnd(period) };
+}
+
 function professionalSessions(professionalId) {
   return state.patients.flatMap((patient) => patientSessions(patient.id, professionalId).map((session) => ({ patient, session })));
 }
@@ -189,7 +218,7 @@ function monthCalendar(scope, month, cellFor, compact = false) {
   return `<div class="calendar ${compact ? "compact" : ""}"><div class="calendar-head"><button type="button" class="cal-nav" data-cal-nav="${scope}|-1" aria-label="Mês anterior">‹</button><strong>${monthTitle(month)}</strong><button type="button" class="cal-nav" data-cal-nav="${scope}|1" aria-label="Próximo mês">›</button></div><div class="calendar-grid">${WEEKDAYS.map((day) => `<span class="cal-weekday">${day}</span>`).join("")}${cells.join("")}</div></div>`;
 }
 
-function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; ui.editPatientId = null; ui.draftSessions = []; ui.draftAssigned = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
+function setView(view) { ui.view = view; ui.newAccess = null; ui.editProfessionalId = null; ui.editPatientId = null; ui.anamneseFromId = null; ui.draftSessions = []; ui.draftAssigned = null; render(); window.scrollTo({ top: 0, behavior: "smooth" }); }
 
 function toast(message, isError = false) {
   const region = document.querySelector("#toast-region");
@@ -366,7 +395,7 @@ function adminDashboard() {
 function recentActivity() {
   const items = [
     ...state.patients.map((patient) => ({ date: patient.createdAt, title: `Anamnese de ${patient.name} cadastrada`, detail: patient.status })),
-    ...state.patients.flatMap((patient) => Object.entries(patientReports(patient.id)).map(([professionalId, report]) => ({ date: report.updatedAt, title: `Evolução registrada · ${patient.name}`, detail: getProfessional(professionalId)?.specialty || "Profissional" }))),
+    ...state.patients.flatMap((patient) => Object.entries(state.evolutions[patient.id] || {}).flatMap(([professionalId, byPeriod]) => Object.values(byPeriod).map((report) => ({ date: report.updatedAt, title: `Evolução registrada · ${patient.name}`, detail: getProfessional(professionalId)?.specialty || "Profissional" })))),
   ];
   return items.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4).map((item) => ({ ...item, detail: `${dateLabel(item.date)} · ${item.detail}` }));
 }
@@ -483,13 +512,16 @@ function patientFormSections(patient = null) {
 }
 
 function anamneseView() {
+  const from = state.patients.find((patient) => patient.id === ui.anamneseFromId) || null;
+  const options = [...state.patients].sort((x, y) => x.name.localeCompare(y.name, "pt-BR")).map((patient) => `<option value="${patient.id}" ${patient.id === from?.id ? "selected" : ""}>${escapeHTML(patient.name)}${patient.birthDate ? ` · ${ageFromDate(patient.birthDate)}` : ""}</option>`).join("");
   return `
     ${sectionHeading("Nova ficha de anamnese", "")}
     <div class="split-layout">
       <form class="panel form-card" id="anamnese-form">
         <h2>Dados de entrada</h2>
-        ${patientFormSections()}
-        <div class="form-actions"><button class="button secondary" type="reset">Limpar</button><button class="button" type="submit">Salvar e selecionar profissionais →</button></div>
+        <section class="form-section prefill-box"><div class="form-section-title"><div><h3>Paciente já cadastrado?</h3><p>${state.patients.length ? "Escolha o paciente para preencher a ficha com os dados do cadastro." : "Ainda não há pacientes cadastrados. Preencha a ficha abaixo para cadastrar um novo."}</p></div></div><div class="prefill-row"><select id="prefill-patient" aria-label="Paciente já cadastrado" ${state.patients.length ? "" : "disabled"}><option value="">Novo paciente (preencher do zero)</option>${options}</select></div>${from ? `<p class="prefill-note">Dados de <strong>${escapeHTML(from.name)}</strong> carregados do cadastro. Ao salvar, o cadastro é atualizado com o que estiver nesta ficha.</p>` : ""}</section>
+        ${patientFormSections(from)}
+        <div class="form-actions"><button class="button secondary" type="reset">${from ? "Desfazer alterações" : "Limpar"}</button><button class="button" type="submit">Salvar e selecionar profissionais →</button></div>
       </form>
       ${processAside(1)}
     </div>`;
@@ -505,7 +537,19 @@ function patientsView() {
       <h2>${editing ? `Editar ${escapeHTML(editing.name)}` : "Novo paciente"}</h2>
       ${patientFormSections(editing)}
       <div class="form-actions">${editing ? `<button class="button secondary" type="button" data-cancel-patient>Cancelar</button>` : `<button class="button secondary" type="reset">Limpar</button>`}<button class="button" type="submit">${editing ? "Salvar alterações" : "Salvar paciente"}</button></div>
-    </form>`;
+    </form>
+    ${editing ? historyPanel(editing) : ""}`;
+}
+
+function historyPanel(patient) {
+  const now = currentPeriod();
+  const entries = state.history[patient.id] || [];
+  const cards = patientPeriods(patient).reverse().map((period) => {
+    const open = period === now, { start, end } = periodRange(patient, period);
+    const items = entries.filter((entry) => entry.period === period);
+    return `<details class="month-card" ${open ? "open" : ""}><summary><strong>${escapeHTML(periodTitle(period))}</strong><span class="cell-muted">${shortDate(start)} a ${shortDate(end)}</span><span class="status ${open ? "in-progress" : "done"}">${open ? "Aberto" : "Fechado"}</span></summary><div class="month-body">${items.map((entry) => `<div class="history-entry"><div><strong>${shortDate(entry.date)}</strong>${entry.author ? ` <span class="cell-muted">· ${escapeHTML(entry.author)}</span>` : ""}<p>${escapeHTML(entry.text)}</p></div>${open ? `<button class="button danger small" type="button" data-delete-history="${entry.id}">Remover</button>` : ""}</div>`).join("") || emptyInline("Nenhum registro neste mês.")}${open ? `<form class="history-form" id="history-form"><div class="field"><label for="history-text">Novo registro do histórico</label><textarea id="history-text" name="text" required placeholder="Descreva o que aconteceu com o paciente neste período."></textarea></div><div class="form-actions"><button class="button" type="submit">Registrar em ${escapeHTML(periodTitle(period))}</button></div></form>` : `<p class="cell-muted">Mês fechado: não aceita novos registros.</p>`}<button class="button secondary small" type="button" data-open-period-report="${patient.id}|${period}">Ver relatório deste período</button></div></details>`;
+  }).join("");
+  return `<article class="panel content-panel" id="patient-history" style="margin-top:20px"><div class="panel-header" style="padding:0 0 8px"><h2>Histórico mensal · ${escapeHTML(patient.name)}</h2></div><p class="cell-muted" style="margin:0 0 16px">Cada mês tem o seu histórico e o seu relatório. No último dia do mês ele fecha e não aceita mais registros; no mês seguinte começa um novo, e cada relatório mostra o período a que se refere.</p><div class="month-list">${cards}</div></article>`;
 }
 
 function processAside(current) {
@@ -579,7 +623,14 @@ function caseDetailView() {
 }
 
 function professionalRecordForm(patient, professional, report) {
-  return `<div class="split-layout"><form id="professional-record-form" class="panel form-card"><h2>Seu registro clínico</h2><p>Preencha aos poucos. Você pode revisar e atualizar as informações ao longo dos atendimentos.</p><section class="form-section"><div class="form-section-title"><div><h3>Queixa principal</h3><p>Seu olhar profissional sobre a demanda apresentada.</p></div></div><div class="field"><textarea name="complaint" placeholder="Descreva a queixa principal observada em sua área de atuação.">${escapeHTML(report.complaint)}</textarea></div></section><section class="form-section"><div class="form-section-title"><div><h3>Plano de ação</h3><p>Estratégias, avaliação e ações planejadas.</p></div></div><div class="field"><textarea name="plan" placeholder="Descreva os objetivos e as ações propostas.">${escapeHTML(report.plan)}</textarea></div></section><section class="form-section"><div class="form-section-title"><div><h3>Resultado e evolução</h3><p>Registre avanços, observações e resultados parciais.</p></div></div><div class="field"><textarea name="result" placeholder="Descreva a evolução observada durante o acompanhamento.">${escapeHTML(report.result)}</textarea></div></section><div class="form-actions"><span class="cell-muted">${report.updatedAt ? `Atualizado em ${dateLabel(report.updatedAt)}` : "Ainda não salvo"}</span><button class="button" type="submit">Salvar evolução</button></div></form><aside class="panel side-note"><h2>Contexto do caso</h2><p>Informações compartilhadas pela administração na anamnese.</p><div class="step-list"><div class="step active"><span class="step-number">✓</span>Queixa familiar registrada</div><div class="step"><span class="step-number">${patient.diagnosis.has ? "✓" : "—"}</span>${patient.diagnosis.has ? `Documento: ${escapeHTML(patient.diagnosis.fileName || "anexado")}` : "Sem documento diagnóstico"}</div><div class="step"><span class="step-number">${patient.hypothesis.has ? "✓" : "—"}</span>${patient.hypothesis.has ? "Hipótese registrada" : "Sem hipótese relatada"}</div></div><hr /><small><strong>Queixa da família:</strong><br>${escapeHTML(patient.familyComplaint)}</small></aside></div>`;
+  return `<div class="split-layout"><form id="professional-record-form" class="panel form-card"><h2>Seu registro clínico · ${escapeHTML(periodTitle(currentPeriod()))}</h2><p>Preencha aos poucos. Este registro vale para o mês atual e fecha em ${shortDate(periodEnd(currentPeriod()))}; depois disso ele fica só para leitura e um novo mês começa em branco.</p><section class="form-section"><div class="form-section-title"><div><h3>Queixa principal</h3><p>Seu olhar profissional sobre a demanda apresentada.</p></div></div><div class="field"><textarea name="complaint" placeholder="Descreva a queixa principal observada em sua área de atuação.">${escapeHTML(report.complaint)}</textarea></div></section><section class="form-section"><div class="form-section-title"><div><h3>Plano de ação</h3><p>Estratégias, avaliação e ações planejadas.</p></div></div><div class="field"><textarea name="plan" placeholder="Descreva os objetivos e as ações propostas.">${escapeHTML(report.plan)}</textarea></div></section><section class="form-section"><div class="form-section-title"><div><h3>Resultado e evolução</h3><p>Registre avanços, observações e resultados parciais.</p></div></div><div class="field"><textarea name="result" placeholder="Descreva a evolução observada durante o acompanhamento.">${escapeHTML(report.result)}</textarea></div></section><div class="form-actions"><span class="cell-muted">${report.updatedAt ? `Atualizado em ${dateLabel(report.updatedAt)}` : "Ainda não salvo"}</span><button class="button" type="submit">Salvar evolução</button></div></form><aside class="panel side-note"><h2>Contexto do caso</h2><p>Informações compartilhadas pela administração na anamnese.</p><div class="step-list"><div class="step active"><span class="step-number">✓</span>Queixa familiar registrada</div><div class="step"><span class="step-number">${patient.diagnosis.has ? "✓" : "—"}</span>${patient.diagnosis.has ? `Documento: ${escapeHTML(patient.diagnosis.fileName || "anexado")}` : "Sem documento diagnóstico"}</div><div class="step"><span class="step-number">${patient.hypothesis.has ? "✓" : "—"}</span>${patient.hypothesis.has ? "Hipótese registrada" : "Sem hipótese relatada"}</div></div><hr /><small><strong>Queixa da família:</strong><br>${escapeHTML(patient.familyComplaint)}</small>${previousMonths(patient, professional)}</aside></div>`;
+}
+
+function previousMonths(patient, professional) {
+  const now = currentPeriod();
+  const items = Object.entries(patientEvolutions(patient.id, professional.id)).filter(([period]) => period !== now).sort((x, y) => y[0].localeCompare(x[0]));
+  if (!items.length) return "";
+  return `<hr /><h3 class="booked-title">Meses anteriores (fechados)</h3><div class="month-list">${items.map(([period, record]) => `<details class="month-card"><summary><strong>${escapeHTML(periodTitle(period))}</strong><span class="status done">Fechado</span></summary><div class="month-body">${[["Queixa principal", record.complaint], ["Plano de ação", record.plan], ["Resultado e evolução", record.result]].map(([label, text]) => `<p><strong>${label}</strong><br>${text ? escapeHTML(text) : "—"}</p>`).join("")}</div></details>`).join("")}</div>`;
 }
 
 function anamneseReadOnly(patient) {
@@ -590,28 +641,38 @@ function scheduleView(patient, professional, sessions) {
   return `<div class="split-layout"><article class="panel form-card"><h2>Agenda de atendimentos</h2><p>Registre as sessões previstas e acompanhe o que já foi realizado.</p><div class="session-list">${sessions.map((session) => `<div class="session-item"><span class="session-calendar"><b>${new Date(`${session.date}T12:00:00`).getDate().toString().padStart(2, "0")}</b>${new Intl.DateTimeFormat("pt-BR", { month: "short" }).format(new Date(`${session.date}T12:00:00`)).replace(".", "")}</span><div><strong>${escapeHTML(session.objective)}</strong><span>${dateLabel(session.date)}${session.time ? ` · ${escapeHTML(session.time)}` : ""}</span></div><span class="session-status">${statusTag(session.status)}</span></div>`).join("") || emptyInline("Nenhuma sessão registrada ainda.")}</div></article><form class="panel form-card" id="session-form"><h2>Adicionar sessão</h2><p>Crie um lembrete para o próximo atendimento.</p><div class="form-grid"><div class="field"><label for="session-date">Data</label><input id="session-date" name="date" type="date" required /></div><div class="field"><label for="session-time">Horário</label><select id="session-time" name="time">${SLOTS.map((time) => `<option>${time}</option>`).join("")}</select></div><div class="field"><label for="session-status">Status</label><select id="session-status" name="status"><option>Agendada</option><option>Realizada</option></select></div><div class="field full"><label for="session-objective">Objetivo ou observação</label><input id="session-objective" name="objective" required placeholder="Ex.: Entrevista inicial com responsáveis" /></div></div><div class="form-actions"><button class="button" type="submit">Adicionar à agenda</button></div></form></div>`;
 }
 
+function reportPeriodOf(patient) {
+  const periods = patientPeriods(patient);
+  if (!periods.includes(ui.reportPeriod)) ui.reportPeriod = currentPeriod();
+  return ui.reportPeriod;
+}
+
 function reportsView() {
   const patient = getPatient() || state.patients[0];
-  if (!patient) return `${sectionHeading("Relatório integrado", "Documento clínico consolidado.")}${emptyState("Nenhum caso disponível", "Cadastre uma anamnese e encaminhe profissionais para gerar o primeiro relatório.", "Iniciar anamnese", "anamnese")}`;
+  if (!patient) return `${sectionHeading("Relatório integrado", "Documento clínico consolidado.")}${emptyState("Nenhum caso disponível", "Cadastre um paciente e encaminhe profissionais para gerar o primeiro relatório.", "Cadastrar paciente", "patients")}`;
+  const period = reportPeriodOf(patient), open = period === currentPeriod(), { start, end } = periodRange(patient, period);
+  const periodOptions = patientPeriods(patient).reverse().map((item) => `<option value="${item}" ${item === period ? "selected" : ""}>${escapeHTML(periodTitle(item))}${item === currentPeriod() ? " (aberto)" : ""}</option>`).join("");
   return `
-    ${sectionHeading("Relatório integrado", "Visualização consolidada dos registros preenchidos pela equipe.", `<button class="button" type="button" data-print-report>Imprimir relatório</button>`)}
+    ${sectionHeading("Relatório integrado", "Visualização consolidada dos registros preenchidos pela equipe, mês a mês.", `<button class="button" type="button" data-print-report>Imprimir relatório</button>`)}
     <div class="report-layout">
-      <aside class="panel report-controls"><div><h2>Selecionar caso</h2><p>Alterne o paciente para visualizar o relatório correspondente.</p><select id="report-patient">${state.patients.map((item) => `<option value="${item.id}" ${item.id === patient.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></div><div class="report-info"><strong>Conteúdo automático</strong><span>Entram apenas registros preenchidos por profissionais encaminhados.</span></div></aside>
-      ${reportPaper(patient)}
+      <aside class="panel report-controls"><div><h2>Selecionar caso</h2><p>Alterne o paciente para visualizar o relatório correspondente.</p><select id="report-patient">${state.patients.map((item) => `<option value="${item.id}" ${item.id === patient.id ? "selected" : ""}>${escapeHTML(item.name)}</option>`).join("")}</select></div><div class="report-info"><strong>Período do relatório</strong><select id="report-period" aria-label="Período do relatório">${periodOptions}</select><span>${shortDate(start)} a ${shortDate(end)} · ${open ? `aberto até ${shortDate(end)}` : "fechado, somente leitura"}</span></div><div class="report-info"><strong>Conteúdo automático</strong><span>Entram apenas registros preenchidos por profissionais encaminhados e o histórico do período.</span></div></aside>
+      ${reportPaper(patient, false, period)}
     </div>`;
 }
 
-function reportPaper(patient, print = false) {
+function reportPaper(patient, print = false, period = reportPeriodOf(patient)) {
   const assigned = getAssigned(patient);
-  const reports = patientReports(patient.id);
+  const reports = Object.fromEntries(Object.keys(state.evolutions[patient.id] || {}).map((professionalId) => [professionalId, patientEvolutions(patient.id, professionalId)]));
   const reportSection = (field, title) => {
-    const items = assigned.filter((professional) => reports[professional.id]?.[field]?.trim());
-    return `<section class="report-section"><h3>${title}</h3>${items.length ? items.map((professional) => `<div class="professional-report"><strong>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.name)}</strong><p>${escapeHTML(reports[professional.id][field])}</p></div>`).join("") : `<p class="report-empty">Nenhum registro profissional preenchido nesta seção.</p>`}</section>`;
+    const items = assigned.filter((professional) => reports[professional.id]?.[period]?.[field]?.trim());
+    return `<section class="report-section"><h3>${title}</h3>${items.length ? items.map((professional) => `<div class="professional-report"><strong>${escapeHTML(professional.specialty)} · ${escapeHTML(professional.name)}</strong><p>${escapeHTML(reports[professional.id][period][field])}</p></div>`).join("") : `<p class="report-empty">Nenhum registro profissional preenchido nesta seção.</p>`}</section>`;
   };
   const guardians = patient.guardians;
   const clinic = state.clinic;
+  const { start, end } = periodRange(patient, period), isOpen = period === currentPeriod();
+  const entries = (state.history[patient.id] || []).filter((entry) => entry.period === period);
   const contact = [`CNPJ ${escapeHTML(clinic.cnpj)}`, escapeHTML(clinic.phone), `Instagram: <a href="https://www.instagram.com/${clinic.instagram}/" target="_blank" rel="noopener">${escapeHTML(clinic.instagram)}</a>`].join(" · ");
-  return `<article class="report-paper ${print ? "print-paper" : ""}"><header class="letterhead"><img class="report-logo" src="assets/logo-horizontal-azul.png" alt="Mente e Transformação · Clínica"><h2>${escapeHTML(clinic.name)}</h2><p>${contact}</p><p>${escapeHTML(clinic.address)}</p><div class="report-title">Relatório profissional integrado</div></header><section class="report-section"><h3>Dados de cadastro</h3><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Sexo</td><td>${escapeHTML(patient.gender)}</td></tr><tr><td>Nascimento</td><td>${dateLabel(patient.birthDate)} · ${ageFromDate(patient.birthDate)}</td><td>CPF</td><td>${escapeHTML(patient.cpf || "Não informado")}</td></tr><tr><td>Responsáveis</td><td colspan="3">${guardians.map((guardian) => `${escapeHTML(guardian.relation || "Responsável")}: ${escapeHTML(guardian.name)} · CPF ${escapeHTML(guardian.cpf || "não informado")}`).join("<br>")}</td></tr></tbody></table></section><section class="report-section"><h3>Queixa principal da família</h3><p class="family-complaint">${patient.familyComplaint.trim() ? escapeHTML(patient.familyComplaint) : '<span class="report-empty">Não informada.</span>'}</p></section>${reportSection("complaint", "Queixa principal por área")}${reportSection("plan", "Plano de ação")}${reportSection("result", "Resultados e evolução")}<section class="signatures"><div class="signature">${escapeHTML(clinic.name)}<span>CNPJ ${escapeHTML(clinic.cnpj)}</span></div></section><footer class="report-footer">${escapeHTML(clinic.name)} · Documento gerado em ${dateLabel(new Date().toISOString().slice(0, 10))}</footer></article>`;
+  return `<article class="report-paper ${print ? "print-paper" : ""}"><header class="letterhead"><img class="report-logo" src="assets/logo-horizontal-azul.png" alt="Mente e Transformação · Clínica"><h2>${escapeHTML(clinic.name)}</h2><p>${contact}</p><p>${escapeHTML(clinic.address)}</p><div class="report-title">Relatório profissional integrado</div><p class="report-period">Período de referência: <strong>${shortDate(start)} a ${shortDate(end)}</strong> (${escapeHTML(periodTitle(period))}) · ${isOpen ? "relatório em aberto" : "relatório fechado"}</p></header><section class="report-section"><h3>Dados de cadastro</h3><table class="patient-table"><tbody><tr><td>Paciente</td><td>${escapeHTML(patient.name)}</td><td>Sexo</td><td>${escapeHTML(patient.gender)}</td></tr><tr><td>Nascimento</td><td>${dateLabel(patient.birthDate)} · ${ageFromDate(patient.birthDate)}</td><td>CPF</td><td>${escapeHTML(patient.cpf || "Não informado")}</td></tr><tr><td>Responsáveis</td><td colspan="3">${guardians.map((guardian) => `${escapeHTML(guardian.relation || "Responsável")}: ${escapeHTML(guardian.name)} · CPF ${escapeHTML(guardian.cpf || "não informado")}`).join("<br>")}</td></tr></tbody></table></section><section class="report-section"><h3>Queixa principal da família</h3><p class="family-complaint">${patient.familyComplaint.trim() ? escapeHTML(patient.familyComplaint) : '<span class="report-empty">Não informada.</span>'}</p></section>${reportSection("complaint", "Queixa principal por área")}${reportSection("plan", "Plano de ação")}${reportSection("result", "Resultados e evolução")}<section class="report-section"><h3>Histórico do período</h3>${entries.length ? entries.map((entry) => `<div class="professional-report"><strong>${shortDate(entry.date)}</strong><p>${escapeHTML(entry.text)}</p></div>`).join("") : `<p class="report-empty">Nenhum registro no histórico deste período.</p>`}</section><section class="signatures"><div class="signature">${escapeHTML(clinic.name)}<span>CNPJ ${escapeHTML(clinic.cnpj)}</span></div></section><footer class="report-footer">${escapeHTML(clinic.name)} · Período ${shortDate(start)} a ${shortDate(end)} · Documento gerado em ${dateLabel(new Date().toISOString().slice(0, 10))}</footer></article>`;
 }
 
 function emptyInline(text) { return `<div class="empty-inline">${escapeHTML(text)}</div>`; }
@@ -667,6 +728,11 @@ function bindEvents() {
   document.querySelector("#professional-form")?.addEventListener("submit", submitProfessional);
   document.querySelector("#anamnese-form")?.addEventListener("submit", submitAnamnese);
   document.querySelector("#patient-form")?.addEventListener("submit", submitPatient);
+  document.querySelector("#prefill-patient")?.addEventListener("change", (event) => { ui.anamneseFromId = event.target.value || null; render(); });
+  document.querySelector("#history-form")?.addEventListener("submit", saveHistory);
+  document.querySelectorAll("[data-delete-history]").forEach((button) => button.addEventListener("click", () => deleteHistory(button.dataset.deleteHistory)));
+  document.querySelectorAll("[data-open-period-report]").forEach((button) => button.addEventListener("click", () => { const [id, period] = button.dataset.openPeriodReport.split("|"); ui.activeCaseId = id; setView("reports"); ui.reportPeriod = period; render(); }));
+  document.querySelector("#report-period")?.addEventListener("change", (event) => { ui.reportPeriod = event.target.value; render(); });
   document.querySelectorAll("[data-edit-patient]").forEach((row) => {
     const open = () => { ui.editPatientId = row.dataset.editPatient; render(); document.querySelector("#patient-form")?.scrollIntoView({ behavior: "smooth", block: "start" }); };
     row.addEventListener("click", (event) => { if (!event.target.closest("button")) open(); });
@@ -709,7 +775,7 @@ function bindEvents() {
   document.querySelector("#save-assignment")?.addEventListener("click", saveAssignment);
   document.querySelector("#professional-record-form")?.addEventListener("submit", saveProfessionalRecord);
   document.querySelector("#session-form")?.addEventListener("submit", saveSession);
-  document.querySelector("#report-patient")?.addEventListener("change", (event) => { ui.activeCaseId = event.target.value; render(); });
+  document.querySelector("#report-patient")?.addEventListener("change", (event) => { ui.activeCaseId = event.target.value; ui.reportPeriod = null; render(); });
 }
 
 function bindGuardianButtons() {
@@ -808,14 +874,17 @@ function readPatientForm(form, current = null) {
 async function submitAnamnese(event) {
   event.preventDefault();
   if (ui.role !== "admin") return toast("Somente a administração pode cadastrar pacientes.", true);
-  const row = { id: uid("case"), ...readPatientForm(event.currentTarget) };
+  const from = state.patients.find((patient) => patient.id === ui.anamneseFromId) || null;
+  const fields = readPatientForm(event.currentTarget, from);
+  const id = from?.id || uid("case");
   const saved = await commit(async () => {
-    await must(db.from("pacientes").insert(row));
-    Object.assign(ui, { activeCaseId: row.id, filterSpecialty: "Todas", view: "assignments", newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null });
+    if (from) await must(db.from("pacientes").update(fields).eq("id", id));
+    else await must(db.from("pacientes").insert({ id, ...fields }));
+    Object.assign(ui, { activeCaseId: id, anamneseFromId: null, filterSpecialty: "Todas", view: "assignments", newAccess: null, editProfessionalId: null, draftSessions: [], draftAssigned: null });
   });
   if (!saved) return;
   window.scrollTo({ top: 0, behavior: "smooth" });
-  toast("Ficha de anamnese salva. Agora selecione os profissionais.");
+  toast(from ? "Ficha salva e cadastro atualizado. Agora selecione os profissionais." : "Ficha de anamnese salva. Agora selecione os profissionais.");
 }
 
 async function submitPatient(event) {
@@ -838,11 +907,29 @@ async function deletePatient(id) {
   const patient = state.patients.find((item) => item.id === id);
   if (!patient) return;
   const sessions = Object.values(state.sessions[id] || {}).reduce((total, list) => total + list.length, 0);
-  const records = Object.keys(patientReports(id)).length;
-  const lost = [sessions && `${sessions} atendimento${sessions === 1 ? "" : "s"} agendado${sessions === 1 ? "" : "s"}`, records && `${records} evolução${records === 1 ? "" : "ões"} de profissionais`].filter(Boolean);
+  const records = Object.values(state.evolutions[id] || {}).reduce((total, byPeriod) => total + Object.keys(byPeriod).length, 0);
+  const notes = (state.history[id] || []).length;
+  const lost = [sessions && `${sessions} atendimento${sessions === 1 ? "" : "s"} agendado${sessions === 1 ? "" : "s"}`, records && `${records} evolução${records === 1 ? "" : "ões"} de profissionais`, notes && `${notes} registro${notes === 1 ? "" : "s"} do histórico mensal`].filter(Boolean);
   if (!window.confirm(`Remover ${patient.name}?${lost.length ? `\n\nTambém serão apagados: ${lost.join(" e ")}.` : ""}\n\nEsta ação não pode ser desfeita.`)) return;
   if (ui.editPatientId === id) ui.editPatientId = null;
   if (await commit(() => must(db.from("pacientes").delete().eq("id", id)))) toast("Paciente removido.");
+}
+
+async function saveHistory(event) {
+  event.preventDefault();
+  if (ui.role !== "admin") return toast("Somente a administração pode registrar no histórico.", true);
+  const patient = state.patients.find((item) => item.id === ui.editPatientId);
+  const text = new FormData(event.currentTarget).get("text").trim();
+  if (!patient || !text) return toast("Escreva o registro do histórico.", true);
+  const period = currentPeriod();
+  const row = { id: uid("hist"), paciente_id: patient.id, periodo: period, data: clinicToday(), texto: text, autor: ui.account?.username || "" };
+  if (await commit(() => must(db.from("historico_mensal").insert(row)))) toast(`Registrado no histórico de ${periodTitle(period)}.`);
+}
+
+async function deleteHistory(id) {
+  if (ui.role !== "admin") return toast("Somente a administração pode remover registros.", true);
+  if (!window.confirm("Remover este registro do histórico?\n\nEsta ação não pode ser desfeita.")) return;
+  if (await commit(() => must(db.from("historico_mensal").delete().eq("id", id)))) toast("Registro removido do histórico.");
 }
 
 async function saveAssignment() {
@@ -892,8 +979,8 @@ async function saveProfessionalRecord(event) {
   const professional = getProfessional(ui.professionalId);
   if (!patient || !professional) return;
   const data = new FormData(event.currentTarget);
-  const row = { paciente_id: patient.id, profissional_id: professional.id, queixa: data.get("complaint").trim(), plano: data.get("plan").trim(), resultado: data.get("result").trim(), atualizado_em: todayKey() };
-  if (await commit(() => must(db.from("evolucoes").upsert(row, { onConflict: "paciente_id,profissional_id" })))) toast("Evolução profissional salva no relatório integrado.");
+  const row = { paciente_id: patient.id, profissional_id: professional.id, periodo: currentPeriod(), queixa: data.get("complaint").trim(), plano: data.get("plan").trim(), resultado: data.get("result").trim(), atualizado_em: clinicToday() };
+  if (await commit(() => must(db.from("evolucoes").upsert(row, { onConflict: "paciente_id,profissional_id,periodo" })))) toast("Evolução salva no relatório de " + periodTitle(row.periodo) + ".");
 }
 
 async function saveSession(event) {
@@ -911,7 +998,7 @@ function printReport() {
   if (!patient) return;
   const root = document.createElement("div");
   root.className = "print-root";
-  root.innerHTML = reportPaper(patient, true);
+  root.innerHTML = reportPaper(patient, true, reportPeriodOf(patient));
   document.body.append(root);
   window.print();
   root.remove();

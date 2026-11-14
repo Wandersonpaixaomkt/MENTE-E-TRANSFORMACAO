@@ -5,6 +5,12 @@
 create extension if not exists pgcrypto with schema extensions;
 create schema if not exists privado;
 
+-- Mês de referência (fuso de Belém). Relatórios e histórico só aceitam registros do mês atual.
+create function public.periodo_atual() returns text
+language sql stable set search_path = '' as $$
+  select to_char(now() at time zone 'America/Belem', 'YYYY-MM')
+$$;
+
 -- Tabelas -------------------------------------------------------------------
 
 create table public.profissionais (
@@ -51,8 +57,21 @@ create table public.evolucoes (
   plano text not null default '',
   resultado text not null default '',
   atualizado_em date not null default current_date,
-  primary key (paciente_id, profissional_id)
+  periodo text not null default public.periodo_atual(),
+  primary key (paciente_id, profissional_id, periodo)
 );
+
+-- Histórico descrito do paciente, mês a mês (fecha sozinho na virada do mês).
+create table public.historico_mensal (
+  id text primary key,
+  paciente_id text not null references public.pacientes (id) on delete cascade,
+  periodo text not null check (periodo ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  data date not null,
+  texto text not null,
+  autor text not null default '',
+  criado_em timestamptz not null default now()
+);
+create index on public.historico_mensal (paciente_id, periodo);
 
 create table public.sessoes (
   id text primary key,
@@ -102,6 +121,7 @@ alter table public.senhas_acesso enable row level security;
 alter table public.pacientes enable row level security;
 alter table public.evolucoes enable row level security;
 alter table public.sessoes enable row level security;
+alter table public.historico_mensal enable row level security;
 alter table public.indisponibilidades enable row level security;
 
 create policy "equipe visível para quem entra" on public.profissionais for select to authenticated using (true);
@@ -114,10 +134,19 @@ create policy "só admin vê senhas" on public.senhas_acesso for select to authe
 create policy "admin gerencia pacientes" on public.pacientes for all to authenticated using (public.eh_admin()) with check (public.eh_admin());
 create policy "profissional vê pacientes encaminhados" on public.pacientes for select to authenticated using (public.meu_profissional_id() = any (profissionais_ids));
 
-create policy "admin gerencia evoluções" on public.evolucoes for all to authenticated using (public.eh_admin()) with check (public.eh_admin());
+create policy "admin lê evoluções" on public.evolucoes for select to authenticated using (public.eh_admin());
+create policy "admin grava evoluções do mês aberto" on public.evolucoes for insert to authenticated with check (public.eh_admin() and periodo = public.periodo_atual());
+create policy "admin altera evoluções do mês aberto" on public.evolucoes for update to authenticated using (public.eh_admin() and periodo = public.periodo_atual()) with check (public.eh_admin() and periodo = public.periodo_atual());
+create policy "admin apaga evoluções do mês aberto" on public.evolucoes for delete to authenticated using (public.eh_admin() and periodo = public.periodo_atual());
 create policy "profissional lê evoluções dos seus pacientes" on public.evolucoes for select to authenticated using (public.atende_paciente(paciente_id));
-create policy "profissional grava a própria evolução" on public.evolucoes for insert to authenticated with check (profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id));
-create policy "profissional atualiza a própria evolução" on public.evolucoes for update to authenticated using (profissional_id = public.meu_profissional_id()) with check (profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id));
+create policy "profissional grava a própria evolução do mês aberto" on public.evolucoes for insert to authenticated with check (profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id) and periodo = public.periodo_atual());
+create policy "profissional atualiza a própria evolução do mês aberto" on public.evolucoes for update to authenticated using (profissional_id = public.meu_profissional_id() and periodo = public.periodo_atual()) with check (profissional_id = public.meu_profissional_id() and public.atende_paciente(paciente_id) and periodo = public.periodo_atual());
+
+create policy "admin lê histórico" on public.historico_mensal for select to authenticated using (public.eh_admin());
+create policy "profissional lê histórico dos seus pacientes" on public.historico_mensal for select to authenticated using (public.atende_paciente(paciente_id));
+create policy "admin registra no mês aberto" on public.historico_mensal for insert to authenticated with check (public.eh_admin() and periodo = public.periodo_atual());
+create policy "admin altera no mês aberto" on public.historico_mensal for update to authenticated using (public.eh_admin() and periodo = public.periodo_atual()) with check (public.eh_admin() and periodo = public.periodo_atual());
+create policy "admin apaga no mês aberto" on public.historico_mensal for delete to authenticated using (public.eh_admin() and periodo = public.periodo_atual());
 
 create policy "admin gerencia sessões" on public.sessoes for all to authenticated using (public.eh_admin()) with check (public.eh_admin());
 create policy "profissional lê sessões dos seus pacientes" on public.sessoes for select to authenticated using (public.atende_paciente(paciente_id));
@@ -127,7 +156,8 @@ create policy "admin vê indisponibilidades" on public.indisponibilidades for se
 create policy "profissional gerencia a própria indisponibilidade" on public.indisponibilidades for all to authenticated using (profissional_id = public.meu_profissional_id()) with check (profissional_id = public.meu_profissional_id());
 
 grant usage on schema public to anon, authenticated;
-grant select, insert, update, delete on public.profissionais, public.pacientes, public.evolucoes, public.sessoes, public.indisponibilidades to authenticated;
+grant select, insert, update, delete on public.profissionais, public.pacientes, public.evolucoes, public.sessoes, public.indisponibilidades, public.historico_mensal to authenticated;
+grant execute on function public.periodo_atual() to authenticated;
 grant select on public.perfis, public.senhas_acesso to authenticated;
 
 -- Contas de acesso ------------------------------------------------------------
